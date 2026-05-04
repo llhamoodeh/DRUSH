@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user.dart';
 import '../shared/globals.dart';
@@ -25,6 +26,9 @@ class AuthException implements Exception {
 }
 
 class AuthService {
+  static const String _tokenKey = 'auth_token';
+  static const String _userKey = 'auth_user';
+
   Future<AuthSession> login({
     required String email,
     required String password,
@@ -59,6 +63,44 @@ class AuthService {
       token: token,
       user: User.fromJson(userJson),
     );
+  }
+
+  Future<void> persistSession(AuthSession session) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, session.token);
+    await prefs.setString(_userKey, jsonEncode(session.user.toJson()));
+  }
+
+  Future<AuthSession?> restoreSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_tokenKey);
+    final userJson = prefs.getString(_userKey);
+
+    if (token == null || token.isEmpty || userJson == null) {
+      return null;
+    }
+
+    try {
+      final decoded = jsonDecode(userJson);
+      if (decoded is! Map<String, dynamic>) {
+        await clearSession();
+        return null;
+      }
+
+      return AuthSession(
+        token: token,
+        user: User.fromJson(decoded),
+      );
+    } catch (_) {
+      await clearSession();
+      return null;
+    }
+  }
+
+  Future<void> clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_userKey);
   }
 
   String? _extractMessage(String responseBody) {

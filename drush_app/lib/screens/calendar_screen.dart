@@ -8,8 +8,17 @@ import '../services/backend_service.dart';
 
 class CalendarScreen extends StatefulWidget {
   final AuthSession session;
+  final int? initialGroupId;
+  final ScheduleItem? initialSchedule;
+  final bool openEditorOnLoad;
 
-  const CalendarScreen({super.key, required this.session});
+  const CalendarScreen({
+    super.key,
+    required this.session,
+    this.initialGroupId,
+    this.initialSchedule,
+    this.openEditorOnLoad = false,
+  });
 
   @override
   State<CalendarScreen> createState() => _CalendarScreenState();
@@ -33,21 +42,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   late DateTime _selectedMonth;
   late DateTime _selectedDate;
-  int? _selectedGroupId;
+  int _selectedGroupId = 0;
   DateTime? _startDateTime;
   DateTime? _endDateTime;
   DateTime? _createdAt;
   ScheduleItem? _editingSchedule;
+  bool _autoEditorScheduled = false;
 
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _selectedMonth = DateTime(now.year, now.month, 1);
-    _selectedDate = DateTime(now.year, now.month, now.day);
-    _startDateTime = DateTime(now.year, now.month, now.day, 9, 0);
-    _endDateTime = DateTime(now.year, now.month, now.day, 10, 0);
-    _createdAt = now;
+    final initialSchedule = widget.initialSchedule;
+    final baseDate = initialSchedule?.startDateTime ?? now;
+    _selectedMonth = DateTime(baseDate.year, baseDate.month, 1);
+    _selectedDate = DateTime(baseDate.year, baseDate.month, baseDate.day);
+    _selectedGroupId = initialSchedule?.groupId ?? widget.initialGroupId ?? 0;
+    _startDateTime =
+        initialSchedule?.startDateTime ??
+        DateTime(now.year, now.month, now.day, 9, 0);
+    _endDateTime =
+        initialSchedule?.endDateTime ??
+        DateTime(now.year, now.month, now.day, 10, 0);
+    _createdAt = initialSchedule?.createdAt ?? now;
     _loadData();
   }
 
@@ -79,11 +96,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
       setState(() {
         _groups = groups;
         _schedules = schedules;
-        _selectedGroupId ??= groups.isNotEmpty ? groups.first.id : null;
+        if (_selectedGroupId != 0 &&
+            !groups.any((group) => group.id == _selectedGroupId)) {
+          _selectedGroupId = 0;
+        }
         _startDateTime ??= _defaultStartFor(_selectedDate);
         _endDateTime ??= _defaultEndFor(_selectedDate);
         _loading = false;
       });
+
+      if (widget.openEditorOnLoad && !_autoEditorScheduled) {
+        _autoEditorScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) {
+            return;
+          }
+
+          if (widget.initialSchedule != null) {
+            _beginEdit(widget.initialSchedule!);
+          } else {
+            _resetForm(date: _selectedDate, groupId: widget.initialGroupId);
+          }
+
+          _showScheduleFormSheet();
+        });
+      }
     } catch (err) {
       if (!mounted) {
         return;
@@ -103,8 +140,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       _editingSchedule = null;
       _selectedDate = targetDate;
       _selectedMonth = DateTime(targetDate.year, targetDate.month, 1);
-      _selectedGroupId =
-          groupId ?? (_groups.isNotEmpty ? _groups.first.id : null);
+      _selectedGroupId = groupId ?? 0;
       _startDateTime = _defaultStartFor(targetDate);
       _endDateTime = _defaultEndFor(targetDate);
       _createdAt = DateTime.now();
@@ -121,7 +157,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
         schedule.startDateTime.month,
         1,
       );
-      _selectedGroupId = schedule.groupId;
+      _selectedGroupId = _groups.any((group) => group.id == schedule.groupId)
+          ? schedule.groupId
+          : 0;
       _startDateTime = schedule.startDateTime;
       _endDateTime = schedule.endDateTime;
       _createdAt = schedule.createdAt ?? DateTime.now();
@@ -131,175 +169,252 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Widget _buildFormContent(BuildContext sheetContext, {bool inSheet = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_editingSchedule != null) ...[
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: redSoft,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.edit_rounded, color: redDark),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Editing an existing schedule.',
-                    style: GoogleFonts.manrope(
-                      fontWeight: FontWeight.w700,
-                      color: redDark,
-                    ),
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useTwoColumns = constraints.maxWidth >= 640;
+        final fieldWidth = useTwoColumns
+            ? (constraints.maxWidth - 12) / 2
+            : constraints.maxWidth;
+
+        Widget responsiveField(Widget child) {
+          return SizedBox(width: fieldWidth, child: child);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_editingSchedule != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: redSoft,
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                TextButton(
-                  onPressed: () => _resetForm(
-                    date: _selectedDate,
-                    groupId: _selectedGroupId,
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    Icon(Icons.edit_rounded, color: redDark),
+                    Text(
+                      'Editing an existing schedule.',
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w700,
+                        color: redDark,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => _resetForm(
+                        date: _selectedDate,
+                        groupId: _selectedGroupId,
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            DropdownButtonFormField<int>(
+              initialValue: _selectedGroupId,
+              isExpanded: true,
+              items: [
+                const DropdownMenuItem<int>(value: 0, child: Text('No group')),
+                ..._groups.map(
+                  (group) => DropdownMenuItem<int>(
+                    value: group.id,
+                    child: Text(group.name, overflow: TextOverflow.ellipsis),
                   ),
-                  child: const Text('Cancel'),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
-        DropdownButtonFormField<int>(
-          value: _selectedGroupId,
-          items: _groups
-              .map(
-                (group) => DropdownMenuItem<int>(
-                  value: group.id,
-                  child: Text(group.name),
+              decoration: InputDecoration(
+                labelText: 'Group (optional)',
+                prefixIcon: const Icon(Icons.group_rounded),
+                filled: true,
+                fillColor: redSoft,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
                 ),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _selectedGroupId = value ?? 0;
+                });
+              },
+            ),
+            const SizedBox(height: 14),
+            if (useTwoColumns)
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  responsiveField(
+                    _buildDateField(
+                      label: 'Start date',
+                      value: _startDateTime ?? _defaultStartFor(_selectedDate),
+                      onTap: _pickStartDate,
+                      icon: Icons.calendar_month_rounded,
+                    ),
+                  ),
+                  responsiveField(
+                    _buildTimeField(
+                      label: 'Start time',
+                      value: _startDateTime ?? _defaultStartFor(_selectedDate),
+                      onTap: _pickStartTime,
+                      icon: Icons.schedule_rounded,
+                    ),
+                  ),
+                  responsiveField(
+                    _buildDateField(
+                      label: 'End date',
+                      value: _endDateTime ?? _defaultEndFor(_selectedDate),
+                      onTap: _pickEndDate,
+                      icon: Icons.event_available_rounded,
+                    ),
+                  ),
+                  responsiveField(
+                    _buildTimeField(
+                      label: 'End time',
+                      value: _endDateTime ?? _defaultEndFor(_selectedDate),
+                      onTap: _pickEndTime,
+                      icon: Icons.alarm_rounded,
+                    ),
+                  ),
+                  responsiveField(
+                    _buildDateField(
+                      label: 'Created date',
+                      value: _createdAt ?? DateTime.now(),
+                      onTap: _pickCreatedDate,
+                      icon: Icons.event_available_rounded,
+                    ),
+                  ),
+                  responsiveField(
+                    _buildTimeField(
+                      label: 'Created time',
+                      value: _createdAt ?? DateTime.now(),
+                      onTap: _pickCreatedTime,
+                      icon: Icons.schedule_send_rounded,
+                    ),
+                  ),
+                ],
               )
-              .toList(),
-          decoration: InputDecoration(
-            labelText: 'Group',
-            prefixIcon: const Icon(Icons.group_rounded),
-            filled: true,
-            fillColor: redSoft,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide.none,
-            ),
-          ),
-          onChanged: (value) {
-            setState(() {
-              _selectedGroupId = value;
-            });
-          },
-        ),
-        const SizedBox(height: 14),
-        _buildDateField(
-          label: 'Start date',
-          value: _startDateTime ?? _defaultStartFor(_selectedDate),
-          onTap: _pickStartDate,
-          icon: Icons.calendar_month_rounded,
-        ),
-        const SizedBox(height: 12),
-        _buildTimeField(
-          label: 'Start time',
-          value: _startDateTime ?? _defaultStartFor(_selectedDate),
-          onTap: _pickStartTime,
-          icon: Icons.schedule_rounded,
-        ),
-        const SizedBox(height: 12),
-        _buildDateField(
-          label: 'End date',
-          value: _endDateTime ?? _defaultEndFor(_selectedDate),
-          onTap: _pickEndDate,
-          icon: Icons.event_available_rounded,
-        ),
-        const SizedBox(height: 12),
-        _buildTimeField(
-          label: 'End time',
-          value: _endDateTime ?? _defaultEndFor(_selectedDate),
-          onTap: _pickEndTime,
-          icon: Icons.alarm_rounded,
-        ),
-        const SizedBox(height: 12),
-        _buildDateField(
-          label: 'Created date',
-          value: _createdAt ?? DateTime.now(),
-          onTap: _pickCreatedDate,
-          icon: Icons.event_available_rounded,
-        ),
-        const SizedBox(height: 12),
-        _buildTimeField(
-          label: 'Created time',
-          value: _createdAt ?? DateTime.now(),
-          onTap: _pickCreatedTime,
-          icon: Icons.schedule_send_rounded,
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          controller: _tipsController,
-          maxLines: 3,
-          decoration: InputDecoration(
-            labelText: 'Task details',
-            prefixIcon: const Icon(Icons.edit_note_rounded),
-            filled: true,
-            fillColor: redSoft,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (_error != null) ...[
-          Text(
-            _error!,
-            style: GoogleFonts.manrope(
-              color: redDark,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _saving
-                ? null
-                : () async {
-                    if (inSheet) {
-                      await _submitSchedule();
-                      if (mounted) Navigator.of(sheetContext).pop();
-                    } else {
-                      await _submitSchedule();
-                    }
-                  },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: redDark,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+            else ...[
+              _buildDateField(
+                label: 'Start date',
+                value: _startDateTime ?? _defaultStartFor(_selectedDate),
+                onTap: _pickStartDate,
+                icon: Icons.calendar_month_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildTimeField(
+                label: 'Start time',
+                value: _startDateTime ?? _defaultStartFor(_selectedDate),
+                onTap: _pickStartTime,
+                icon: Icons.schedule_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildDateField(
+                label: 'End date',
+                value: _endDateTime ?? _defaultEndFor(_selectedDate),
+                onTap: _pickEndDate,
+                icon: Icons.event_available_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildTimeField(
+                label: 'End time',
+                value: _endDateTime ?? _defaultEndFor(_selectedDate),
+                onTap: _pickEndTime,
+                icon: Icons.alarm_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildDateField(
+                label: 'Created date',
+                value: _createdAt ?? DateTime.now(),
+                onTap: _pickCreatedDate,
+                icon: Icons.event_available_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildTimeField(
+                label: 'Created time',
+                value: _createdAt ?? DateTime.now(),
+                onTap: _pickCreatedTime,
+                icon: Icons.schedule_send_rounded,
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _tipsController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'Task details',
+                prefixIcon: const Icon(Icons.edit_note_rounded),
+                filled: true,
+                fillColor: redSoft,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
-            child: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  )
-                : Text(
-                    _editingSchedule == null
-                        ? 'Save schedule'
-                        : 'Update schedule',
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+            const SizedBox(height: 12),
+            if (_error != null) ...[
+              Text(
+                _error!,
+                style: GoogleFonts.manrope(
+                  color: redDark,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _saving
+                    ? null
+                    : () async {
+                        if (inSheet) {
+                          final navigator = Navigator.of(sheetContext);
+                          await _submitSchedule();
+                          if (mounted && navigator.canPop()) {
+                            navigator.pop();
+                          }
+                        } else {
+                          await _submitSchedule();
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: redDark,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
                   ),
-          ),
-        ),
-      ],
+                ),
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : Text(
+                        _editingSchedule == null
+                            ? 'Save schedule'
+                            : 'Update schedule',
+                        style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                      ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -469,6 +584,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   String _groupNameFor(int groupId) {
+    if (groupId == 0) {
+      return 'Personal';
+    }
+
     for (final group in _groups) {
       if (group.id == groupId) {
         return group.name;
@@ -666,6 +785,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     final wasEditing = _editingSchedule != null;
     final selectedGroupId = _selectedGroupId;
+    final backendGroupId = selectedGroupId == 0 ? null : selectedGroupId;
     final createdAt = _createdAt ?? DateTime.now();
 
     try {
@@ -675,7 +795,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       late ScheduleItem savedSchedule;
       debugPrint(
         '[Schedule] save ${wasEditing ? 'update' : 'create'} request: '
-        'userId=${widget.session.user.id}, groupId=${selectedGroupId ?? 'none'}, '
+        'userId=${widget.session.user.id}, groupId=${backendGroupId ?? 'none'}, '
         'start=${_startDateTime!.toIso8601String()}, '
         'end=${_endDateTime!.toIso8601String()}, '
         'createdAt=${createdAt.toIso8601String()}, '
@@ -686,7 +806,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         savedSchedule = await _backendService.createSchedule(
           token: widget.session.token,
           userId: widget.session.user.id,
-          groupId: selectedGroupId,
+          groupId: backendGroupId,
           startDateTime: _startDateTime!,
           endDateTime: _endDateTime!,
           createdAt: createdAt,
@@ -698,7 +818,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           token: widget.session.token,
           original: _editingSchedule!,
           userId: widget.session.user.id,
-          groupId: selectedGroupId,
+          groupId: backendGroupId,
           startDateTime: _startDateTime!,
           endDateTime: _endDateTime!,
           createdAt: createdAt,
@@ -997,144 +1117,164 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
                       final calendarPanel = _PanelCard(
                         title: 'Monthly calendar',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isCompact = constraints.maxWidth < 420;
+                            final gridSpacing = isCompact ? 6.0 : 10.0;
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                IconButton(
-                                  onPressed: () => _pickMonth(-1),
-                                  icon: const Icon(Icons.chevron_left_rounded),
-                                  color: redDark,
-                                ),
-                                Expanded(
-                                  child: Center(
-                                    child: Text(
-                                      _monthYearLabel(_selectedMonth),
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w800,
-                                        color: redDark,
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      onPressed: () => _pickMonth(-1),
+                                      icon: const Icon(
+                                        Icons.chevron_left_rounded,
                                       ),
+                                      color: redDark,
                                     ),
-                                  ),
-                                ),
-                                IconButton(
-                                  onPressed: () => _pickMonth(1),
-                                  icon: const Icon(Icons.chevron_right_rounded),
-                                  color: redDark,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: List.generate(7, (index) {
-                                return Expanded(
-                                  child: Center(
-                                    child: Text(
-                                      [
-                                        'S',
-                                        'M',
-                                        'T',
-                                        'W',
-                                        'T',
-                                        'F',
-                                        'S',
-                                      ][index],
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.black54,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ),
-                            const SizedBox(height: 10),
-                            GridView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: monthCells.length,
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 7,
-                                    mainAxisSpacing: 10,
-                                    crossAxisSpacing: 10,
-                                    childAspectRatio: 1.0,
-                                  ),
-                              itemBuilder: (context, index) {
-                                final day = monthCells[index];
-                                if (day == null) {
-                                  return const SizedBox.shrink();
-                                }
-
-                                final isSelected = _isSameDate(
-                                  day,
-                                  _selectedDate,
-                                );
-                                final count =
-                                    counts['${day.year}-${day.month}-${day.day}'] ??
-                                    0;
-
-                                return InkWell(
-                                  onTap: () {
-                                    setState(() {
-                                      _selectedDate = day;
-                                      _startDateTime = _replaceDate(
-                                        _startDateTime ?? _defaultStartFor(day),
-                                        day,
-                                      );
-                                      _endDateTime = _replaceDate(
-                                        _endDateTime ?? _defaultEndFor(day),
-                                        day,
-                                      );
-                                    });
-                                  },
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: isSelected ? redDark : redSoft,
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: isSelected ? redDark : redSoft,
-                                      ),
-                                    ),
-                                    padding: const EdgeInsets.all(6),
-                                    child: Stack(
-                                      children: [
-                                        Align(
-                                          alignment: Alignment.topLeft,
-                                          child: Text(
-                                            '${day.day}',
-                                            style: GoogleFonts.manrope(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w800,
-                                              color: isSelected
-                                                  ? Colors.white
-                                                  : redDark,
-                                            ),
+                                    Expanded(
+                                      child: Center(
+                                        child: Text(
+                                          _monthYearLabel(_selectedMonth),
+                                          style: GoogleFonts.manrope(
+                                            fontSize: isCompact ? 16 : 18,
+                                            fontWeight: FontWeight.w800,
+                                            color: redDark,
                                           ),
                                         ),
-                                        if (count > 0)
-                                          Align(
-                                            alignment: Alignment.bottomRight,
-                                            child: Container(
-                                              width: 8,
-                                              height: 8,
-                                              decoration: const BoxDecoration(
-                                                color: red,
-                                                shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: () => _pickMonth(1),
+                                      icon: const Icon(
+                                        Icons.chevron_right_rounded,
+                                      ),
+                                      color: redDark,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: List.generate(7, (index) {
+                                    return Expanded(
+                                      child: Center(
+                                        child: Text(
+                                          [
+                                            'S',
+                                            'M',
+                                            'T',
+                                            'W',
+                                            'T',
+                                            'F',
+                                            'S',
+                                          ][index],
+                                          style: GoogleFonts.manrope(
+                                            fontSize: isCompact ? 10 : 12,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.black54,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                ),
+                                const SizedBox(height: 10),
+                                GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: monthCells.length,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 7,
+                                        mainAxisSpacing: gridSpacing,
+                                        crossAxisSpacing: gridSpacing,
+                                        childAspectRatio: isCompact
+                                            ? 0.92
+                                            : 1.0,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final day = monthCells[index];
+                                    if (day == null) {
+                                      return const SizedBox.shrink();
+                                    }
+
+                                    final isSelected = _isSameDate(
+                                      day,
+                                      _selectedDate,
+                                    );
+                                    final count =
+                                        counts['${day.year}-${day.month}-${day.day}'] ??
+                                        0;
+
+                                    return InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _selectedDate = day;
+                                          _startDateTime = _replaceDate(
+                                            _startDateTime ??
+                                                _defaultStartFor(day),
+                                            day,
+                                          );
+                                          _endDateTime = _replaceDate(
+                                            _endDateTime ?? _defaultEndFor(day),
+                                            day,
+                                          );
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: isSelected ? redDark : redSoft,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? redDark
+                                                : redSoft,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.all(6),
+                                        child: Stack(
+                                          children: [
+                                            Align(
+                                              alignment: Alignment.topLeft,
+                                              child: Text(
+                                                '${day.day}',
+                                                style: GoogleFonts.manrope(
+                                                  fontSize: isCompact ? 11 : 13,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: isSelected
+                                                      ? Colors.white
+                                                      : redDark,
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
+                                            if (count > 0)
+                                              Align(
+                                                alignment:
+                                                    Alignment.bottomRight,
+                                                child: Container(
+                                                  width: 8,
+                                                  height: 8,
+                                                  decoration:
+                                                      const BoxDecoration(
+                                                        color: red,
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       );
 

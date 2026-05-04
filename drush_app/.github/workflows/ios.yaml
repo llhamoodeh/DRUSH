@@ -1,0 +1,125 @@
+name: Build and deploy iOS IPA
+
+on: [workflow_dispatch]
+
+jobs:
+  ios-build:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    env:
+      BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+      BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      KEYCHAIN_NAME: build.keychain
+      PROFILE_NAME: drush
+      BUNDLE_ID: com.example.drushApp
+      APP_STORE_TEAM_ID: ${{ secrets.APP_STORE_TEAM_ID }}
+      versionName: ${{ secrets.versionName }}
+      versionNumber: ${{ secrets.versionNumber }}
+
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.3'
+          channel: stable
+          cache: true
+
+      - name: Setup Ruby & Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install Fastlane
+        run: gem install fastlane
+
+      # ✅ Clean Flutter + fetch dependencies
+      - name: Clean and fetch Flutter dependencies
+        run: |
+          flutter clean
+          flutter pub get
+          flutter pub run flutter_launcher_icons:main
+
+      # ✅ Import certificate into keychain
+      - name: Import certificate into keychain
+        run: |
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN_NAME" -P "$P12_PASSWORD" -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security list-keychains -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
+
+      # ✅ Decode and install provisioning profile
+      - name: Decode and install provisioning profile
+        run: |
+          echo "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > drush.mobileprovision
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp drush.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      # ✅ Clean CocoaPods & install safely
+      - name: Clean and install Pods
+        run: |
+          flutter clean
+          flutter pub get
+          cd ios
+          rm -rf Pods Podfile.lock .symlinks
+          pod deintegrate || true
+          pod repo update
+          pod install --repo-update
+          cd ..
+
+      # ✅ Select Xcode
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      # ✅ Build Flutter iOS (no codesign)
+      - name: Generate iOS build files (no codesign)
+        run: flutter build ios --release --no-codesign --build-name="${versionName}" --build-number="${versionNumber}"
+
+      # ✅ Archive and export IPA with Development signing
+      - name: Archive and export IPA
+        run: |
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -archivePath build/Runner.xcarchive \
+            -destination "generic/platform=iOS" \
+            archive \
+            DEVELOPMENT_TEAM="$APP_STORE_TEAM_ID" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            CODE_SIGN_STYLE="Manual" \
+            PROVISIONING_PROFILE_SPECIFIER="drush" \
+            -allowProvisioningUpdates
+
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportOptionsPlist ios/exportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates
+
+      # Write App Store Connect API key file
+      - name: Create App Store Connect API key file
+        run: |
+          echo "${{ secrets.APP_STORE_CONNECT_KEY }}" > AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+
+      # Upload to TestFlight
+      - name: Upload to TestFlight
+        run: fastlane release
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+
+
+      # ✅ Cleanup keychain
+      - name: Cleanup keychain
+        run: security delete-keychain "$KEYCHAIN_NAME"

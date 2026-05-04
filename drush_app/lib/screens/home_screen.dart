@@ -6,6 +6,9 @@ import '../models/schedule_item.dart';
 import '../services/auth_service.dart';
 import '../services/backend_service.dart';
 import 'calendar_screen.dart';
+import 'chat_screen.dart';
+import 'groups_screen.dart';
+import 'streak_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthSession session;
@@ -31,21 +34,36 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<_DashboardData> _loadData() async {
-    final groups = await _backendService.fetchGroups(widget.session.token);
+    final groups = await _backendService.fetchUserGroups(
+      widget.session.token,
+      userId: widget.session.user.id,
+    );
     final schedules = await _backendService.fetchSchedules(
+      widget.session.token,
+    );
+    final coins = await _backendService.fetchUserCoins(
       widget.session.token,
     );
     schedules.sort(
       (left, right) => left.startDateTime.compareTo(right.startDateTime),
     );
 
-    return _DashboardData(groups: groups, schedules: schedules);
+    return _DashboardData(groups: groups, schedules: schedules, coins: coins);
   }
 
   void _reloadData() {
     setState(() {
       _futureData = _loadData();
     });
+  }
+
+  Future<void> _openChat() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/chat'),
+        builder: (_) => ChatScreen(session: widget.session),
+      ),
+    );
   }
 
   Future<void> _openCalendar() async {
@@ -60,7 +78,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _openGroups() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GroupsScreen(session: widget.session),
+      ),
+    );
+
+    if (mounted) {
+      _reloadData();
+    }
+  }
+
+  Future<void> _openStreak() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StreakScreen(session: widget.session),
+      ),
+    );
+
+    if (mounted) {
+      _reloadData();
+    }
+  }
+
   String _groupNameFor(_DashboardData data, int groupId) {
+    if (groupId == 0) {
+      return 'Personal';
+    }
+
     for (final group in data.groups) {
       if (group.id == groupId) {
         return group.name;
@@ -91,14 +137,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final suffix = dateTime.hour >= 12 ? 'PM' : 'AM';
 
     return '${months[dateTime.month - 1]} ${dateTime.day}, ${dateTime.year} · $hour:$minute $suffix';
-  }
-
-  String _formatCreated(DateTime? dateTime) {
-    if (dateTime == null) {
-      return 'Created time not set';
-    }
-
-    return 'Created ${_formatDate(dateTime)}';
   }
 
   @override
@@ -137,6 +175,25 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: Colors.black54,
                         ),
                       ),
+                      // Logo on white background
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFF5F5F5)),
+                        ),
+                        child: Center(
+                          child: Image.asset(
+                            'assets/logo.png',
+                            width: 140,
+                            height: 56,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: _reloadData,
@@ -160,7 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final today = data.schedules
                 .where((item) => item.occursOn(now))
                 .toList();
-            final nearestUpcoming = upcoming.isNotEmpty ? upcoming.first : null;
+            final nextThree = upcoming.take(3).toList();
 
             return SingleChildScrollView(
               padding: const EdgeInsets.all(24),
@@ -198,18 +255,42 @@ class _HomeScreenState extends State<HomeScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        'DRUSH CONTROL',
-                                        style: GoogleFonts.playfairDisplay(
-                                          fontSize: 30,
-                                          fontWeight: FontWeight.w700,
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 12,
+                                        ),
+                                        decoration: BoxDecoration(
                                           color: Colors.white,
-                                          letterSpacing: 1.0,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Image.asset(
+                                              'assets/logo.png',
+                                              width: 60,
+                                              height: 60,
+                                              fit: BoxFit.contain,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              'DRUSH',
+                                              style: GoogleFonts
+                                                  .playfairDisplay(
+                                                fontSize: 30,
+                                                fontWeight: FontWeight.w700,
+                                                color: redDark,
+                                                letterSpacing: 1.0,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        'Welcome, ${widget.session.user.name}. Manage live schedules through the DRUSH API.',
+                                        'Welcome, ${widget.session.user.name}!',
                                         style: GoogleFonts.manrope(
                                           fontSize: 15,
                                           color: Colors.white.withValues(
@@ -220,75 +301,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ],
                                   ),
                                 ),
-                                TextButton(
-                                  onPressed: widget.onLogout,
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    backgroundColor: Colors.white.withValues(
-                                      alpha: 0.12,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
+                                Material(
+                                  color: Colors.white.withValues(
+                                    alpha: 0.12,
                                   ),
-                                  child: Text(
-                                    'Logout',
-                                    style: GoogleFonts.manrope(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 18),
-                            Row(
-                              children: [
-                                ElevatedButton(
-                                  onPressed: _openCalendar,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: redDark,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 18,
-                                      vertical: 14,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    'Open Calendar',
-                                    style: GoogleFonts.manrope(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                OutlinedButton(
-                                  onPressed: _reloadData,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    side: BorderSide(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.5,
-                                      ),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 18,
-                                      vertical: 14,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    'Refresh',
-                                    style: GoogleFonts.manrope(
-                                      fontWeight: FontWeight.w700,
+                                  shape: const CircleBorder(),
+                                  child: IconButton(
+                                    onPressed: widget.onLogout,
+                                    tooltip: 'Logout',
+                                    icon: const Icon(
+                                      Icons.logout_rounded,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
@@ -297,22 +320,35 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 16),
                       LayoutBuilder(
                         builder: (context, constraints) {
-                          final isWide = constraints.maxWidth > 780;
+                          final rowWidth = constraints.maxWidth < 780
+                              ? constraints.maxWidth
+                              : 780.0;
                           final cards = [
+                            _MetricCard(
+                              title: 'Coins',
+                              value: data.coins.toString(),
+                              subtitle: 'Your coin balance',
+                              accentColor: const Color(0xFFFF9800),
+                              iconPath: 'assets/coin.png',
+                            ),
                             _MetricCard(
                               title: 'Groups',
                               value: data.groups.length.toString(),
-                              subtitle: 'Loaded from DRUSH API',
+                              subtitle: 'List of your active groups',
                               accentColor: red,
+                              actionLabel: 'Show all',
+                              onActionTap: _openGroups,
                             ),
                             _MetricCard(
                               title: 'Upcoming',
                               value: upcoming.length.toString(),
                               subtitle: 'Schedule items still active',
                               accentColor: redDark,
+                              actionLabel: 'View streak',
+                              onActionTap: _openStreak,
                             ),
                             _MetricCard(
                               title: 'Today',
@@ -322,26 +358,31 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ];
 
-                          if (isWide) {
-                            return Row(
-                              children: [
-                                Expanded(child: cards[0]),
-                                const SizedBox(width: 16),
-                                Expanded(child: cards[1]),
-                                const SizedBox(width: 16),
-                                Expanded(child: cards[2]),
-                              ],
-                            );
-                          }
+                          const spacing = 16.0;
+                          final columns = rowWidth >= 900
+                              ? 4
+                              : rowWidth >= 620
+                                  ? 2
+                                  : 1;
+                          final totalSpacing = spacing * (columns - 1);
+                          final cardWidth = (rowWidth - totalSpacing) / columns;
 
-                          return Column(
-                            children: [
-                              cards[0],
-                              const SizedBox(height: 16),
-                              cards[1],
-                              const SizedBox(height: 16),
-                              cards[2],
-                            ],
+                          return Center(
+                            child: SizedBox(
+                              width: rowWidth,
+                              child: Wrap(
+                                spacing: spacing,
+                                runSpacing: spacing,
+                                children: cards
+                                    .map(
+                                      (card) => SizedBox(
+                                        width: cardWidth,
+                                        child: card,
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ),
                           );
                         },
                       ),
@@ -349,91 +390,37 @@ class _HomeScreenState extends State<HomeScreen> {
                       LayoutBuilder(
                         builder: (context, constraints) {
                           final isWide = constraints.maxWidth > 860;
-                          final left = _PanelCard(
-                            title: 'Next task',
-                            child: nearestUpcoming == null
-                                ? _EmptyState(
-                                    title: 'No scheduled tasks yet',
-                                    message:
-                                        'Open the calendar and create a schedule entry from live DRUSH data.',
-                                    actionLabel: 'Open Calendar',
-                                    onAction: _openCalendar,
-                                  )
-                                : Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _groupNameFor(
-                                          data,
-                                          nearestUpcoming.groupId,
-                                        ),
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.w800,
-                                          color: redDark,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        '${_formatDate(nearestUpcoming.startDateTime)} to ${_formatDate(nearestUpcoming.endDateTime)}',
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 13,
-                                          color: Colors.black54,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        _formatCreated(
-                                          nearestUpcoming.createdAt,
-                                        ),
-                                        style: GoogleFonts.manrope(
-                                          fontSize: 12,
-                                          color: Colors.black45,
-                                        ),
-                                      ),
-                                      if ((nearestUpcoming.tips ?? '')
-                                          .trim()
-                                          .isNotEmpty) ...[
-                                        const SizedBox(height: 12),
-                                        Text(
-                                          nearestUpcoming.tips!,
-                                          style: GoogleFonts.manrope(
-                                            fontSize: 14,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
+                          final calendarCard = _PanelCard(
+                            title: 'Calendar preview',
+                            child: _CalendarPreview(
+                              month: DateTime(now.year, now.month, 1),
+                              schedules: data.schedules,
+                              onTap: _openCalendar,
+                            ),
                           );
 
-                          final right = _PanelCard(
-                            title: 'Recent DRUSH schedules',
-                            child: data.schedules.isEmpty
+                          final eventsCard = _PanelCard(
+                            title: 'Next events',
+                            child: nextThree.isEmpty
                                 ? const _EmptyState(
-                                    title: 'Nothing loaded yet',
+                                    title: 'No upcoming events yet',
                                     message:
-                                        'The schedule table is currently empty.',
+                                        'Upcoming DRUSH schedules will appear here.',
                                   )
                                 : Column(
-                                    children: data.schedules
-                                        .take(5)
+                                    children: nextThree
                                         .map(
                                           (schedule) => Padding(
                                             padding: const EdgeInsets.only(
                                               bottom: 12,
                                             ),
-                                            child: _ScheduleTile(
+                                            child: _EventPreviewTile(
                                               groupName: _groupNameFor(
                                                 data,
                                                 schedule.groupId,
                                               ),
-                                              subtitle:
-                                                  '${_formatDate(schedule.startDateTime)} • ${_formatDate(schedule.endDateTime)}',
-                                              createdLabel: _formatCreated(
-                                                schedule.createdAt,
-                                              ),
+                                              timeLabel:
+                                                  '${_formatDate(schedule.startDateTime)} - ${_formatDate(schedule.endDateTime)}',
                                               tips: schedule.tips,
                                             ),
                                           ),
@@ -446,15 +433,19 @@ class _HomeScreenState extends State<HomeScreen> {
                             return Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(child: left),
+                                Expanded(child: calendarCard),
                                 const SizedBox(width: 16),
-                                Expanded(child: right),
+                                Expanded(child: eventsCard),
                               ],
                             );
                           }
 
                           return Column(
-                            children: [left, const SizedBox(height: 16), right],
+                            children: [
+                              calendarCard,
+                              const SizedBox(height: 16),
+                              eventsCard,
+                            ],
                           );
                         },
                       ),
@@ -473,8 +464,9 @@ class _HomeScreenState extends State<HomeScreen> {
 class _DashboardData {
   final List<GroupItem> groups;
   final List<ScheduleItem> schedules;
+  final int coins;
 
-  const _DashboardData({required this.groups, required this.schedules});
+  const _DashboardData({required this.groups, required this.schedules, required this.coins});
 }
 
 class _PanelCard extends StatelessWidget {
@@ -565,16 +557,177 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-class _ScheduleTile extends StatelessWidget {
+class _CalendarPreview extends StatelessWidget {
+  final DateTime month;
+  final List<ScheduleItem> schedules;
+  final VoidCallback onTap;
+
+  const _CalendarPreview({
+    required this.month,
+    required this.schedules,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final monthLabel = '${months[month.month - 1]} ${month.year}';
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final firstWeekday = DateTime(month.year, month.month, 1).weekday;
+    final leadingEmpty = firstWeekday - 1;
+    final totalCells = leadingEmpty + daysInMonth;
+    final rowCount = (totalCells / 7).ceil();
+    final today = DateTime.now();
+
+    final eventDays = <int>{};
+    for (final schedule in schedules) {
+      final start = schedule.startDateTime;
+      if (start.year == month.year && start.month == month.month) {
+        eventDays.add(start.day);
+      }
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  monthLabel,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFFB71C1C),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Tap to open',
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    color: Colors.black45,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: weekLabels
+                  .map(
+                    (label) => Expanded(
+                      child: Center(
+                        child: Text(
+                          label,
+                          style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+            const SizedBox(height: 8),
+            Table(
+              children: List.generate(rowCount, (rowIndex) {
+                return TableRow(
+                  children: List.generate(7, (colIndex) {
+                    final cellIndex = rowIndex * 7 + colIndex;
+                    final day = cellIndex - leadingEmpty + 1;
+                    if (day < 1 || day > daysInMonth) {
+                      return const SizedBox(height: 30);
+                    }
+
+                    final isToday = day == today.day &&
+                        month.month == today.month &&
+                        month.year == today.year;
+                    final hasEvent = eventDays.contains(day);
+                    final dayLabel = Text(
+                      '$day',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isToday
+                            ? const Color(0xFFB71C1C)
+                            : Colors.black87,
+                      ),
+                    );
+
+                    return SizedBox(
+                      height: 30,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: isToday
+                                  ? BoxDecoration(
+                                      color: const Color(0xFFFFF5F5),
+                                      borderRadius: BorderRadius.circular(10),
+                                    )
+                                  : null,
+                              child: dayLabel,
+                            ),
+                            if (hasEvent) ...[
+                              const SizedBox(height: 2),
+                              Container(
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFB71C1C),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EventPreviewTile extends StatelessWidget {
   final String groupName;
-  final String subtitle;
-  final String createdLabel;
+  final String timeLabel;
   final String? tips;
 
-  const _ScheduleTile({
+  const _EventPreviewTile({
     required this.groupName,
-    required this.subtitle,
-    required this.createdLabel,
+    required this.timeLabel,
     required this.tips,
   });
 
@@ -598,19 +751,16 @@ class _ScheduleTile extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            subtitle,
+            timeLabel,
             style: GoogleFonts.manrope(fontSize: 13, color: Colors.black54),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            createdLabel,
-            style: GoogleFonts.manrope(fontSize: 12, color: Colors.black45),
           ),
           if ((tips ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               tips!,
-              style: GoogleFonts.manrope(fontSize: 13, color: Colors.black87),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.manrope(fontSize: 12, color: Colors.black87),
             ),
           ],
         ],
@@ -624,12 +774,18 @@ class _MetricCard extends StatelessWidget {
   final String value;
   final String subtitle;
   final Color accentColor;
+  final String? actionLabel;
+  final VoidCallback? onActionTap;
+  final String? iconPath;
 
   const _MetricCard({
     required this.title,
     required this.value,
     required this.subtitle,
     required this.accentColor,
+    this.actionLabel,
+    this.onActionTap,
+    this.iconPath,
   });
 
   @override
@@ -651,22 +807,61 @@ class _MetricCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: GoogleFonts.manrope(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: Colors.black54,
-            ),
+          Row(
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFE53935),
+                ),
+              ),
+              const Spacer(),
+              if (actionLabel != null && onActionTap != null)
+                InkWell(
+                  onTap: onActionTap,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 2,
+                      vertical: 2,
+                    ),
+                    child: Text(
+                      actionLabel!,
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFFB71C1C),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 12),
-          Text(
-            value,
-            style: GoogleFonts.playfairDisplay(
-              fontSize: 30,
-              fontWeight: FontWeight.w700,
-              color: accentColor,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (iconPath != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Image.asset(
+                    iconPath!,
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              Text(
+                value,
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 30,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFE53935),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(

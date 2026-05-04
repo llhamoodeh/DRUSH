@@ -23,7 +23,7 @@ class ScheduleItem {
       groupId: _asInt(json['groupid']),
       startDateTime: DateTime.parse(json['startdatetime'].toString()),
       endDateTime: DateTime.parse(json['enddatetime'].toString()),
-      createdAt: _parseDate(json['creeatedat']),
+      createdAt: _parseDate(json['createdat'] ?? json['creeatedat']),
       createdBy: _asNullableInt(json['createdby']),
       tips: json['tips']?.toString(),
     );

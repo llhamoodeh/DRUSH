@@ -1,30 +1,22 @@
-class User {
+class GroupMember {
   final int id;
   final String name;
   final String email;
 
-  const User({
+  const GroupMember({
     required this.id,
     required this.name,
     required this.email,
   });
 
-  factory User.fromJson(Map<String, dynamic> json) {
+  factory GroupMember.fromJson(Map<String, dynamic> json) {
     final rawId = json['id'];
     final id = rawId is int ? rawId : int.tryParse('$rawId') ?? 0;
 
-    return User(
+    return GroupMember(
       id: id,
       name: (json['name'] ?? '').toString(),
       email: (json['email'] ?? '').toString(),
     );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'email': email,
-    };
   }
 }

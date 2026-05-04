@@ -34,6 +34,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   bool _loading = true;
   bool _saving = false;
+  bool _completingTask = false;
   String? _error;
   String? _statusMessage;
 
@@ -268,7 +269,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                   responsiveField(
                     _buildDateField(
-                      label: 'End date',
+                      label: 'Deadline date',
                       value: _endDateTime ?? _defaultEndFor(_selectedDate),
                       onTap: _pickEndDate,
                       icon: Icons.event_available_rounded,
@@ -276,28 +277,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                   responsiveField(
                     _buildTimeField(
-                      label: 'End time',
+                      label: 'Deadline time',
                       value: _endDateTime ?? _defaultEndFor(_selectedDate),
                       onTap: _pickEndTime,
                       icon: Icons.alarm_rounded,
                     ),
                   ),
-                  responsiveField(
-                    _buildDateField(
-                      label: 'Created date',
-                      value: _createdAt ?? DateTime.now(),
-                      onTap: _pickCreatedDate,
-                      icon: Icons.event_available_rounded,
-                    ),
-                  ),
-                  responsiveField(
-                    _buildTimeField(
-                      label: 'Created time',
-                      value: _createdAt ?? DateTime.now(),
-                      onTap: _pickCreatedTime,
-                      icon: Icons.schedule_send_rounded,
-                    ),
-                  ),
+                  // Created date/time are auto-set and not editable in the form.
                 ],
               )
             else ...[
@@ -316,32 +302,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
               const SizedBox(height: 12),
               _buildDateField(
-                label: 'End date',
+                label: 'Deadline date',
                 value: _endDateTime ?? _defaultEndFor(_selectedDate),
                 onTap: _pickEndDate,
                 icon: Icons.event_available_rounded,
               ),
               const SizedBox(height: 12),
               _buildTimeField(
-                label: 'End time',
+                label: 'Deadline time',
                 value: _endDateTime ?? _defaultEndFor(_selectedDate),
                 onTap: _pickEndTime,
                 icon: Icons.alarm_rounded,
               ),
               const SizedBox(height: 12),
-              _buildDateField(
-                label: 'Created date',
-                value: _createdAt ?? DateTime.now(),
-                onTap: _pickCreatedDate,
-                icon: Icons.event_available_rounded,
-              ),
-              const SizedBox(height: 12),
-              _buildTimeField(
-                label: 'Created time',
-                value: _createdAt ?? DateTime.now(),
-                onTap: _pickCreatedTime,
-                icon: Icons.schedule_send_rounded,
-              ),
+              // Created date/time are auto-set and not editable in the form.
             ],
             const SizedBox(height: 12),
             TextFormField(
@@ -923,6 +897,74 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
+  Future<void> _completeSchedule(ScheduleItem schedule) async {
+    if (_completingTask || schedule.isCompleted) {
+      return;
+    }
+
+    if (schedule.userId != widget.session.user.id) {
+      return;
+    }
+
+    setState(() {
+      _completingTask = true;
+      _error = null;
+      _statusMessage = null;
+    });
+
+    try {
+      final now = DateTime.now();
+      if (!now.isBefore(schedule.endDateTime)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cannot complete task after the deadline.'),
+          ),
+        );
+        return;
+      }
+
+      if (schedule.groupId == 0) {
+        await _backendService.completeScheduleTask(
+          token: widget.session.token,
+          userId: schedule.userId,
+          groupId: schedule.groupId,
+          startDateTime: schedule.startDateTime,
+        );
+      } else {
+        await _backendService.completeGroupTask(
+          token: widget.session.token,
+          groupId: schedule.groupId,
+          userId: schedule.userId,
+          startDateTime: schedule.startDateTime,
+        );
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Congrats! 🎉🎊 Task completed before the deadline.'),
+        ),
+      );
+
+      await _loadData();
+    } catch (err) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = err.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _completingTask = false;
+        });
+      }
+    }
+  }
+
   Widget _buildDateField({
     required String label,
     required DateTime value,
@@ -1306,6 +1348,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                             schedule.createdAt,
                                           ),
                                           tips: schedule.tips,
+                                          completedAt: schedule.completedAt,
+                                          canComplete:
+                                              schedule.userId ==
+                                                  widget.session.user.id &&
+                                              !schedule.isCompleted &&
+                                              DateTime.now().isBefore(
+                                                schedule.endDateTime,
+                                              ),
+                                          onComplete: () =>
+                                              _completeSchedule(schedule),
                                           onEdit: () {
                                             _beginEdit(schedule);
                                             if (showFab) {
@@ -1462,16 +1514,22 @@ class _ScheduleTile extends StatelessWidget {
   final String subtitle;
   final String? createdLabel;
   final String? tips;
+  final DateTime? completedAt;
+  final bool canComplete;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback? onComplete;
 
   const _ScheduleTile({
     required this.groupName,
     required this.subtitle,
     required this.createdLabel,
     required this.tips,
+    required this.completedAt,
+    required this.canComplete,
     required this.onEdit,
     required this.onDelete,
+    required this.onComplete,
   });
 
   @override
@@ -1496,6 +1554,32 @@ class _ScheduleTile extends StatelessWidget {
                   ),
                 ),
               ),
+              if (completedAt != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Completed',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF2E7D32),
+                    ),
+                  ),
+                ),
+              if (completedAt == null && canComplete && onComplete != null)
+                IconButton(
+                  onPressed: onComplete,
+                  icon: const Icon(Icons.check_circle_outline_rounded),
+                  color: const Color(0xFF2E7D32),
+                  tooltip: 'Mark as done',
+                ),
               IconButton(
                 onPressed: onEdit,
                 icon: const Icon(Icons.edit_rounded),
@@ -1518,6 +1602,13 @@ class _ScheduleTile extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               createdLabel!,
+              style: GoogleFonts.manrope(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+          if (completedAt != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Completed ${completedAt!.toLocal().month}/${completedAt!.toLocal().day}/${completedAt!.toLocal().year} at ${completedAt!.toLocal().hour % 12 == 0 ? 12 : completedAt!.toLocal().hour % 12}:${completedAt!.toLocal().minute.toString().padLeft(2, '0')} ${completedAt!.toLocal().hour >= 12 ? 'PM' : 'AM'}',
               style: GoogleFonts.manrope(fontSize: 12, color: Colors.black54),
             ),
           ],

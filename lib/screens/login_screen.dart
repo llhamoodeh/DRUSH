@@ -16,11 +16,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
   final _authService = AuthService();
 
   bool _isSubmitting = false;
   String? _error;
   bool _show = false;
+  bool _isRegistering = false;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
@@ -55,10 +58,16 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final session = await _authService.login(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+      final session = _isRegistering
+          ? await _authService.signUp(
+              name: _nameController.text.trim(),
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+            )
+          : await _authService.login(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+            );
 
       if (!mounted) {
         return;
@@ -224,7 +233,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Welcome back',
+                                          _isRegistering ? 'Create an account' : 'Welcome back',
                                         style: GoogleFonts.manrope(
                                           fontSize: 20,
                                           fontWeight: FontWeight.w700,
@@ -240,6 +249,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                         ),
                                       ),
                                       const SizedBox(height: 18),
+                                      if (_isRegistering) ...[
+                                        TextFormField(
+                                          controller: _nameController,
+                                          autofillHints: const [AutofillHints.name],
+                                          decoration: InputDecoration(
+                                            labelText: 'Full name',
+                                            prefixIcon: const Icon(Icons.person),
+                                            filled: true,
+                                            fillColor: redSoft,
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(14),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            final trimmed = value?.trim() ?? '';
+                                            if (trimmed.isEmpty) {
+                                              return 'Name is required.';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 16),
+                                      ],
                                       TextFormField(
                                         controller: _emailController,
                                         keyboardType:
@@ -338,12 +371,37 @@ class _LoginScreenState extends State<LoginScreen> {
                                                   ),
                                                 )
                                               : Text(
-                                                  'Login',
+                                                  _isRegistering ? 'Create account' : 'Login',
                                                   style: GoogleFonts.manrope(
                                                     fontWeight: FontWeight.w700,
                                                   ),
                                                 ),
                                         ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Text(
+                                            _isRegistering
+                                                ? 'Have an account?'
+                                                : 'Don\'t have an account?',
+                                            style: GoogleFonts.manrope(),
+                                          ),
+                                          TextButton(
+                                            onPressed: _isSubmitting
+                                                ? null
+                                                : () {
+                                                    setState(() {
+                                                      _isRegistering = !_isRegistering;
+                                                      _error = null;
+                                                    });
+                                                  },
+                                            child: Text(
+                                              _isRegistering ? 'Sign in' : 'Create account',
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),

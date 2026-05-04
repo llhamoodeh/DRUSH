@@ -68,6 +68,67 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/register', async (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ message: 'name, email and password are required.' });
+  }
+
+  if ((password || '').length < 6) {
+    return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+  }
+
+  try {
+    const pool = await getPool();
+
+    const existing = await pool
+      .request()
+      .input('email', sql.NVarChar(320), email)
+      .query(`SELECT TOP 1 id FROM dbo.[users] WHERE email = @email`);
+
+    if (existing.recordset.length > 0) {
+      return res.status(409).json({ message: 'An account with that email already exists.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const insertResult = await pool
+      .request()
+      .input('name', sql.NVarChar(200), name)
+      .input('email', sql.NVarChar(320), email)
+      .input('password', sql.NVarChar(4000), passwordHash)
+      .query(`
+        INSERT INTO dbo.[users] (name, email, [password])
+        OUTPUT INSERTED.id, INSERTED.name, INSERTED.email
+        VALUES (@name, @email, @password)
+      `);
+
+    const inserted = insertResult.recordset[0];
+
+    const token = jwt.sign(
+      { id: inserted.id, email: inserted.email, name: inserted.name },
+      process.env.JWT_SECRET || 'change-this-secret',
+      { expiresIn: '7d' }
+    );
+
+    return res.status(201).json({
+      token,
+      user: {
+        id: inserted.id,
+        name: inserted.name,
+        email: inserted.email,
+      }
+    });
+  } catch (err) {
+    if (typeof err.message === 'string' && err.message.includes("Login failed for user")) {
+      return res.status(500).json({ message: 'Database authentication failed. Check DB_USER and DB_PASSWORD configuration.' });
+    }
+
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 router.get('/me/coins', authMiddleware, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
@@ -130,7 +191,7 @@ router.get('/me/streak', authMiddleware, async (req, res) => {
         FROM dbo.[schedule_completions] c
         INNER JOIN dbo.[schedule] s 
           ON s.userid = c.userid 
-          AND s.groupid = c.groupid 
+          AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
           AND s.startdatetime = c.startdatetime
         WHERE c.userid = @userid 
           AND c.completedat <= s.enddatetime
@@ -151,7 +212,7 @@ router.get('/me/streak', authMiddleware, async (req, res) => {
         FROM dbo.[schedule_completions] c
         INNER JOIN dbo.[schedule] s 
           ON s.userid = c.userid 
-          AND s.groupid = c.groupid 
+          AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
           AND s.startdatetime = c.startdatetime
         WHERE c.userid = @userid
       `);
@@ -252,7 +313,7 @@ router.get('/leaderboard', authMiddleware, async (req, res) => {
       FROM dbo.[schedule_completions] c
       INNER JOIN dbo.[schedule] s
         ON s.userid = c.userid
-        AND s.groupid = c.groupid
+        AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
         AND s.startdatetime = c.startdatetime
       GROUP BY c.userid, CONVERT(DATE, c.completedat)
       ORDER BY c.userid, CONVERT(DATE, c.completedat) ASC

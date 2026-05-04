@@ -288,11 +288,28 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
     });
 
     try {
+      final now = DateTime.now();
+      if (!now.isBefore(task.schedule.endDateTime)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cannot complete task after the deadline.')),
+        );
+        setState(() {
+          _updating = false;
+        });
+        return;
+      }
+
       await _backendService.completeGroupTask(
         token: widget.session.token,
         groupId: widget.group.id,
         userId: task.schedule.userId,
         startDateTime: task.schedule.startDateTime,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Congrats! 🎉🎊 Task completed before the deadline.')),
       );
 
       if (!mounted) {

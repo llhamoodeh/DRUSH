@@ -3,6 +3,40 @@ const { sql, getPool } = require('../config/db');
 
 const router = express.Router();
 
+let ensureCompletionTablePromise;
+
+async function ensureCompletionTable() {
+  if (!ensureCompletionTablePromise) {
+    const pool = await getPool();
+    ensureCompletionTablePromise = pool.request().query(`
+      IF OBJECT_ID('dbo.schedule_completions', 'U') IS NULL
+      BEGIN
+        CREATE TABLE dbo.[schedule_completions] (
+          id INT IDENTITY(1,1) PRIMARY KEY,
+          userid INT NOT NULL,
+          groupid INT NOT NULL,
+          startdatetime DATETIME2 NOT NULL,
+          completedby INT NOT NULL,
+          completedat DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+        )
+      END
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM sys.indexes
+        WHERE name = 'UX_schedule_completions_task'
+          AND object_id = OBJECT_ID('dbo.schedule_completions')
+      )
+      BEGIN
+        CREATE UNIQUE INDEX [UX_schedule_completions_task]
+        ON dbo.[schedule_completions] (userid, groupid, startdatetime)
+      END
+    `);
+  }
+
+  await ensureCompletionTablePromise;
+}
+
 function decodeDateParam(value) {
   return decodeURIComponent(value);
 }
@@ -120,9 +154,22 @@ router.get('/', async (req, res) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(`
-      SELECT userid, groupid, startdatetime, enddatetime, creeatedat, createdby, tips
+      SELECT
+        s.userid,
+        s.groupid,
+        s.startdatetime,
+        s.enddatetime,
+        s.creeatedat,
+        s.createdby,
+        s.tips,
+        c.completedat,
+        c.completedby
       FROM dbo.[schedule]
-      ORDER BY startdatetime DESC
+      LEFT JOIN dbo.[schedule_completions] c
+        ON c.userid = s.userid
+       AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
+       AND c.startdatetime = s.startdatetime
+      ORDER BY s.startdatetime DESC
     `);
     return res.json(result.recordset);
   } catch (err) {
@@ -145,11 +192,24 @@ router.get('/:userid/:groupid/:startdatetime', async (req, res) => {
       .input('groupid', sql.Int, groupid)
       .input('startdatetime', sql.DateTime2, parsed)
       .query(`
-        SELECT userid, groupid, startdatetime, enddatetime, creeatedat, createdby, tips
-        FROM dbo.[schedule]
-        WHERE userid = @userid
-          AND ((@groupid IS NULL AND groupid IS NULL) OR groupid = @groupid)
-          AND startdatetime = @startdatetime
+        SELECT
+          s.userid,
+          s.groupid,
+          s.startdatetime,
+          s.enddatetime,
+          s.creeatedat,
+          s.createdby,
+          s.tips,
+          c.completedat,
+          c.completedby
+        FROM dbo.[schedule] s
+        LEFT JOIN dbo.[schedule_completions] c
+          ON c.userid = s.userid
+         AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
+         AND c.startdatetime = s.startdatetime
+        WHERE s.userid = @userid
+          AND ((@groupid IS NULL AND s.groupid IS NULL) OR s.groupid = @groupid)
+          AND s.startdatetime = @startdatetime
       `);
 
     if (result.recordset.length === 0) {
@@ -282,6 +342,94 @@ router.delete('/:userid/:groupid/:startdatetime', async (req, res) => {
     }
 
     return res.status(404).json({ message: 'schedule item not found.' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:userid/:groupid/:startdatetime/complete', async (req, res) => {
+  const taskUserId = Number(req.params.userid);
+
+  if (!Number.isFinite(taskUserId)) {
+    return res.status(400).json({ message: 'userid must be a number.' });
+  }
+
+  if (Number(req.user?.id) !== taskUserId) {
+    return res.status(403).json({ message: 'You can only complete your own tasks.' });
+  }
+
+  try {
+    await ensureCompletionTable();
+    const pool = await getPool();
+    const groupid = parseNullableGroupId(req.params.groupid);
+    const scheduleRow = await findScheduleRow(
+      pool,
+      taskUserId,
+      groupid,
+      req.params.startdatetime,
+    );
+
+    if (!scheduleRow) {
+      return res.status(404).json({ message: 'Task not found.' });
+    }
+
+    const startDateTime = scheduleRow.startdatetime;
+    const completionGroupId = groupid ?? 0;
+
+    const existingResult = await pool
+      .request()
+      .input('userid', sql.Int, taskUserId)
+      .input('groupid', sql.Int, completionGroupId)
+      .input('startdatetime', sql.DateTime2, startDateTime)
+      .query(`
+        SELECT id, userid, groupid, startdatetime, completedby, completedat
+        FROM dbo.[schedule_completions]
+        WHERE userid = @userid AND groupid = @groupid AND startdatetime = @startdatetime
+      `);
+
+    if (existingResult.recordset.length > 0) {
+      return res.json(existingResult.recordset[0]);
+    }
+
+    const groupClause = groupid === null ? 'groupid IS NULL' : 'groupid = @groupid';
+    const fullTaskResult = await pool
+      .request()
+      .input('userid', sql.Int, taskUserId)
+      .input('groupid', sql.Int, groupid)
+      .input('startdatetime', sql.DateTime2, startDateTime)
+      .query(`
+        SELECT userid, groupid, startdatetime, enddatetime
+        FROM dbo.[schedule]
+        WHERE userid = @userid
+          AND ${groupClause}
+          AND startdatetime = @startdatetime
+      `);
+
+    if (fullTaskResult.recordset.length === 0) {
+      return res.status(404).json({ message: 'Task not found.' });
+    }
+
+    const fullTask = fullTaskResult.recordset[0];
+    const completionTime = new Date();
+    const deadline = new Date(fullTask.enddatetime);
+
+    if (completionTime > deadline) {
+      return res.status(400).json({ message: 'Cannot complete task after the deadline.' });
+    }
+
+    const insertResult = await pool
+      .request()
+      .input('userid', sql.Int, taskUserId)
+      .input('groupid', sql.Int, completionGroupId)
+      .input('startdatetime', sql.DateTime2, startDateTime)
+      .input('completedby', sql.Int, taskUserId)
+      .query(`
+        INSERT INTO dbo.[schedule_completions] (userid, groupid, startdatetime, completedby, completedat)
+        OUTPUT INSERTED.id, INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
+        VALUES (@userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME())
+      `);
+
+    return res.json({ message: 'Congrats! 🎉🎊', completion: insertResult.recordset[0] });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

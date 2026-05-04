@@ -333,6 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               subtitle: 'Your coin balance',
                               accentColor: const Color(0xFFFF9800),
                               iconPath: 'assets/coin.png',
+                              centerValue: true,
                             ),
                             _MetricCard(
                               title: 'Groups',
@@ -777,6 +778,7 @@ class _MetricCard extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onActionTap;
   final String? iconPath;
+  final bool centerValue;
 
   const _MetricCard({
     required this.title,
@@ -786,6 +788,7 @@ class _MetricCard extends StatelessWidget {
     this.actionLabel,
     this.onActionTap,
     this.iconPath,
+    this.centerValue = false,
   });
 
   @override
@@ -841,6 +844,8 @@ class _MetricCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Row(
+            mainAxisAlignment:
+                centerValue ? MainAxisAlignment.center : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               if (iconPath != null)

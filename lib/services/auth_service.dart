@@ -65,6 +65,44 @@ class AuthService {
     );
   }
 
+  Future<AuthSession> signUp({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final url = Uri.parse('$apiBaseUrl/api/auth/register');
+    final response = await http.post(
+      url,
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'name': name,
+        'email': email,
+        'password': password,
+      }),
+    );
+
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw AuthException(_extractMessage(response.body) ?? 'Sign up failed.');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final token = (data['token'] ?? '').toString();
+
+    if (token.isEmpty) {
+      throw const AuthException('Sign up succeeded but no token was returned.');
+    }
+
+    final userJson = data['user'];
+    if (userJson is! Map<String, dynamic>) {
+      throw const AuthException('Sign up succeeded but user data was missing.');
+    }
+
+    return AuthSession(
+      token: token,
+      user: User.fromJson(userJson),
+    );
+  }
+
   Future<void> persistSession(AuthSession session) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, session.token);

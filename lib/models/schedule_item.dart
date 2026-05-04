@@ -6,6 +6,8 @@ class ScheduleItem {
   final DateTime? createdAt;
   final int? createdBy;
   final String? tips;
+  final DateTime? completedAt;
+  final int? completedBy;
 
   const ScheduleItem({
     required this.userId,
@@ -15,6 +17,8 @@ class ScheduleItem {
     required this.createdAt,
     required this.createdBy,
     required this.tips,
+    this.completedAt,
+    this.completedBy,
   });
 
   factory ScheduleItem.fromJson(Map<String, dynamic> json) {
@@ -26,6 +30,8 @@ class ScheduleItem {
       createdAt: _parseDate(json['createdat'] ?? json['creeatedat']),
       createdBy: _asNullableInt(json['createdby']),
       tips: json['tips']?.toString(),
+      completedAt: _parseDate(json['completedat'] ?? json['completedAt']),
+      completedBy: _asNullableInt(json['completedby'] ?? json['completedBy']),
     );
   }
 
@@ -36,6 +42,8 @@ class ScheduleItem {
   }
 
   bool isUpcoming(DateTime now) => endDateTime.isAfter(now);
+
+  bool get isCompleted => completedAt != null;
 
   static DateTime? _parseDate(Object? value) {
     if (value == null) {

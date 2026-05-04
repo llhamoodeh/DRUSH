@@ -290,6 +290,27 @@ class BackendService {
     }
   }
 
+  Future<void> completeScheduleTask({
+    required String token,
+    required int userId,
+    required int groupId,
+    required DateTime startDateTime,
+  }) async {
+    final encoded = Uri.encodeComponent(_formatDateTime(startDateTime));
+    final url = Uri.parse(
+      '$apiBaseUrl/api/schedule/$userId/$groupId/$encoded/complete',
+    );
+    _logRequest('POST', url);
+    final response = await http.post(url, headers: _headers(token));
+    _logResponse(url, response);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        _extractMessage(response.body) ?? 'Failed to complete task.',
+      );
+    }
+  }
+
   Future<List<GroupLeaderboardEntry>> fetchGroupLeaderboard({
     required String token,
     required int groupId,

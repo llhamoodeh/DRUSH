@@ -462,10 +462,15 @@ router.post('/:id/tasks/:userid/:startdatetime/complete', async (req, res) => {
     const completionTime = new Date();
     const deadline = new Date(fullTask.enddatetime);
 
-    // Determine coins to award/deduct
-    const coinsChange = completionTime <= deadline ? 10 : -10;
+    // Disallow completing after the deadline
+    if (completionTime > deadline) {
+      return res.status(400).json({ message: 'Cannot complete task after the deadline.' });
+    }
 
-    // Insert completion record
+    // Determine coins to award
+    const coinsChange = 10;
+
+    // Insert completion record and award coins
     const insertResult = await pool
       .request()
       .input('userid', sql.Int, taskUserId)
@@ -483,7 +488,7 @@ router.post('/:id/tasks/:userid/:startdatetime/complete', async (req, res) => {
         WHERE id = @userid
       `);
 
-    return res.json(insertResult.recordset[0]);
+    return res.json({ message: 'Congrats! 🎉🎊', completion: insertResult.recordset[0] });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

@@ -858,15 +858,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
     try {
       await _backendService.deleteSchedule(
         token: widget.session.token,
-        userId: schedule.userId,
-        groupId: schedule.groupId,
-        startDateTime: schedule.startDateTime,
+        scheduleId: schedule.id,
       );
 
       if (_editingSchedule != null &&
-          _editingSchedule!.userId == schedule.userId &&
-          _editingSchedule!.groupId == schedule.groupId &&
-          _editingSchedule!.startDateTime == schedule.startDateTime) {
+          _editingSchedule!.id == schedule.id) {
         _resetForm(date: _selectedDate, groupId: _selectedGroupId);
       }
 
@@ -927,16 +923,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
       if (schedule.groupId == 0) {
         await _backendService.completeScheduleTask(
           token: widget.session.token,
-          userId: schedule.userId,
-          groupId: schedule.groupId,
-          startDateTime: schedule.startDateTime,
+          scheduleId: schedule.id,
         );
       } else {
         await _backendService.completeGroupTask(
           token: widget.session.token,
           groupId: schedule.groupId,
-          userId: schedule.userId,
-          startDateTime: schedule.startDateTime,
+          scheduleId: schedule.id,
         );
       }
 

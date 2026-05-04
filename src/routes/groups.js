@@ -3,96 +3,38 @@ const { sql, getPool } = require('../config/db');
 
 const router = express.Router();
 
+let ensureScheduleTablePromise;
 let ensureCompletionTablePromise;
 let ensureCoinsColumnPromise;
 
-function decodeDateParam(value) {
-  return decodeURIComponent(value);
-}
+async function ensureScheduleTable() {
+  if (!ensureScheduleTablePromise) {
+    const pool = await getPool();
+    ensureScheduleTablePromise = pool.request().query(`
+      IF COL_LENGTH('dbo.schedule', 'id') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD id INT IDENTITY(1,1) NOT NULL
+      END
 
-function tryParseDate(value) {
-  if (!value) return null;
-
-  const decoded = decodeDateParam(value);
-  const candidates = [
-    decoded,
-    decoded.replace(/Z$/, ''),
-    decoded.replace(/\.\d{1,6}/, ''),
-    decoded.replace('T', ' '),
-  ];
-
-  for (const candidate of candidates) {
-    const parsed = new Date(candidate);
-    if (!isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-async function findScheduleTask(pool, groupId, userId, startDateTimeParam) {
-  const parsedDate = tryParseDate(startDateTimeParam);
-  const rawDateTime = decodeDateParam(startDateTimeParam);
-
-  const request = pool
-    .request()
-    .input('userid', sql.Int, userId)
-    .input('groupid', sql.Int, groupId);
-
-  if (parsedDate) {
-    const exactResult = await request
-      .input('startdatetime', sql.DateTime2, parsedDate)
-      .query(`
-        SELECT userid, groupid, startdatetime
-        FROM dbo.[schedule]
-        WHERE userid = @userid AND groupid = @groupid AND startdatetime = @startdatetime
-      `);
-
-    if (exactResult.recordset.length > 0) {
-      return exactResult.recordset[0];
-    }
-  }
-
-  const stringResult = await pool
-    .request()
-    .input('userid', sql.Int, userId)
-    .input('groupid', sql.Int, groupId)
-    .input('raw', sql.NVarChar(64), rawDateTime)
-    .query(`
-      SELECT TOP 1 userid, groupid, startdatetime
-      FROM dbo.[schedule]
-      WHERE userid = @userid
-        AND groupid = @groupid
-        AND CONVERT(varchar(64), startdatetime, 126) = @raw
+      IF NOT EXISTS (
+        SELECT 1
+        FROM sys.key_constraints
+        WHERE type = 'PK'
+          AND parent_object_id = OBJECT_ID('dbo.schedule')
+      )
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD CONSTRAINT PK_schedule_id PRIMARY KEY (id)
+      END
     `);
-
-  if (stringResult.recordset.length > 0) {
-    return stringResult.recordset[0];
   }
 
-  if (!parsedDate) {
-    return null;
-  }
-
-  const looseResult = await pool
-    .request()
-    .input('userid', sql.Int, userId)
-    .input('groupid', sql.Int, groupId)
-    .input('prefix', sql.NVarChar(32), rawDateTime.replace(/\.\d{1,6}/, '').replace(/Z$/, '').slice(0, 19))
-    .query(`
-      SELECT TOP 1 userid, groupid, startdatetime
-      FROM dbo.[schedule]
-      WHERE userid = @userid
-        AND groupid = @groupid
-        AND CONVERT(varchar(19), startdatetime, 126) = @prefix
-      ORDER BY startdatetime DESC
-    `);
-
-  return looseResult.recordset[0] || null;
+  await ensureScheduleTablePromise;
 }
 
 async function ensureCompletionTable() {
+  await ensureScheduleTable();
   if (!ensureCompletionTablePromise) {
     const pool = await getPool();
     ensureCompletionTablePromise = pool.request().query(`
@@ -100,6 +42,7 @@ async function ensureCompletionTable() {
       BEGIN
         CREATE TABLE dbo.[schedule_completions] (
           id INT IDENTITY(1,1) PRIMARY KEY,
+          scheduleid INT NOT NULL,
           userid INT NOT NULL,
           groupid INT NOT NULL,
           startdatetime DATETIME2 NOT NULL,
@@ -107,6 +50,21 @@ async function ensureCompletionTable() {
           completedat DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
         )
       END
+
+      IF COL_LENGTH('dbo.schedule_completions', 'scheduleid') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule_completions]
+        ADD scheduleid INT NULL
+      END
+
+      UPDATE c
+      SET scheduleid = sch.id
+      FROM dbo.[schedule_completions] c
+      INNER JOIN dbo.[schedule] sch
+        ON sch.userid = c.userid
+       AND sch.startdatetime = c.startdatetime
+       AND sch.groupid = c.groupid
+      WHERE c.scheduleid IS NULL
 
       IF NOT EXISTS (
         SELECT 1
@@ -117,6 +75,18 @@ async function ensureCompletionTable() {
       BEGIN
         CREATE UNIQUE INDEX [UX_schedule_completions_task]
         ON dbo.[schedule_completions] (userid, groupid, startdatetime)
+      END
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM sys.indexes
+        WHERE name = 'UX_schedule_completions_scheduleid'
+          AND object_id = OBJECT_ID('dbo.schedule_completions')
+      )
+      BEGIN
+        CREATE UNIQUE INDEX [UX_schedule_completions_scheduleid]
+        ON dbo.[schedule_completions] (scheduleid)
+        WHERE scheduleid IS NOT NULL
       END
     `);
   }
@@ -378,13 +348,11 @@ router.get('/:id/tasks', async (req, res) => {
       .request()
       .input('groupid', sql.Int, groupId)
       .query(`
-        SELECT s.userid, s.groupid, s.startdatetime, s.enddatetime, s.creeatedat, s.createdby, s.tips,
+        SELECT s.id, s.userid, s.groupid, s.startdatetime, s.enddatetime, s.creeatedat, s.createdby, s.tips,
                c.completedat, c.completedby
         FROM dbo.[schedule] s
         LEFT JOIN dbo.[schedule_completions] c
-          ON c.userid = s.userid
-         AND c.groupid = s.groupid
-         AND c.startdatetime = s.startdatetime
+          ON c.scheduleid = s.id
         WHERE s.groupid = @groupid
         ORDER BY s.startdatetime DESC
       `);
@@ -395,93 +363,82 @@ router.get('/:id/tasks', async (req, res) => {
   }
 });
 
-router.post('/:id/tasks/:userid/:startdatetime/complete', async (req, res) => {
+router.post('/:id/tasks/:scheduleId/complete', async (req, res) => {
   const groupId = Number(req.params.id);
-  const taskUserId = Number(req.params.userid);
+  const scheduleId = Number(req.params.scheduleId);
 
-  if (!Number.isFinite(taskUserId)) {
-    return res.status(400).json({ message: 'userid must be a number.' });
-  }
-
-  if (Number(req.user?.id) !== taskUserId) {
-    return res.status(403).json({ message: 'You can only complete your own tasks.' });
+  if (!Number.isFinite(scheduleId)) {
+    return res.status(400).json({ message: 'scheduleId must be a number.' });
   }
 
   try {
     await ensureCompletionTable();
     await ensureCoinsColumn();
     const pool = await getPool();
+    const scheduleResult = await pool
+      .request()
+      .input('id', sql.Int, scheduleId)
+      .query(`
+        SELECT id, userid, groupid, startdatetime, enddatetime
+        FROM dbo.[schedule]
+        WHERE id = @id
+      `);
+
+    if (scheduleResult.recordset.length === 0) {
+      return res.status(404).json({ message: 'Task not found.' });
+    }
+
+    const schedule = scheduleResult.recordset[0];
+    const taskUserId = Number(schedule.userid);
+
+    if (Number(req.user?.id) !== taskUserId) {
+      return res.status(403).json({ message: 'You can only complete your own tasks.' });
+    }
+
+    if (Number(schedule.groupid) !== groupId) {
+      return res.status(404).json({ message: 'Task not found.' });
+    }
+
     const isMember = await isGroupMember(pool, groupId, taskUserId);
 
     if (!isMember) {
       return res.status(403).json({ message: 'Not a member of this group.' });
     }
 
-    const scheduleTask = await findScheduleTask(pool, groupId, taskUserId, req.params.startdatetime);
-
-    if (!scheduleTask) {
-      return res.status(404).json({ message: 'Task not found.' });
-    }
-
-    const startDateTime = scheduleTask.startdatetime;
-
     const existingResult = await pool
       .request()
-      .input('userid', sql.Int, taskUserId)
-      .input('groupid', sql.Int, groupId)
-      .input('startdatetime', sql.DateTime2, startDateTime)
+      .input('scheduleid', sql.Int, scheduleId)
       .query(`
-        SELECT id, userid, groupid, startdatetime, completedby, completedat
+        SELECT id, scheduleid, userid, groupid, startdatetime, completedby, completedat
         FROM dbo.[schedule_completions]
-        WHERE userid = @userid AND groupid = @groupid AND startdatetime = @startdatetime
+        WHERE scheduleid = @scheduleid
       `);
 
     if (existingResult.recordset.length > 0) {
       return res.json(existingResult.recordset[0]);
     }
 
-    // Get full task details including deadline
-    const fullTaskResult = await pool
-      .request()
-      .input('userid', sql.Int, taskUserId)
-      .input('groupid', sql.Int, groupId)
-      .input('startdatetime', sql.DateTime2, startDateTime)
-      .query(`
-        SELECT userid, groupid, startdatetime, enddatetime
-        FROM dbo.[schedule]
-        WHERE userid = @userid
-          AND groupid = @groupid
-          AND startdatetime = @startdatetime
-      `);
-
-    if (fullTaskResult.recordset.length === 0) {
-      return res.status(404).json({ message: 'Task not found.' });
-    }
-
-    const fullTask = fullTaskResult.recordset[0];
     const completionTime = new Date();
-    const deadline = new Date(fullTask.enddatetime);
+    const deadline = new Date(schedule.enddatetime);
 
-    // Disallow completing after the deadline
     if (completionTime > deadline) {
       return res.status(400).json({ message: 'Cannot complete task after the deadline.' });
     }
 
-    // Determine coins to award
     const coinsChange = 10;
 
-    // Insert completion record and award coins
     const insertResult = await pool
       .request()
+      .input('scheduleid', sql.Int, scheduleId)
       .input('userid', sql.Int, taskUserId)
       .input('groupid', sql.Int, groupId)
-      .input('startdatetime', sql.DateTime2, startDateTime)
+      .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .input('completedby', sql.Int, taskUserId)
       .input('coinsChange', sql.Int, coinsChange)
       .query(`
-        INSERT INTO dbo.[schedule_completions] (userid, groupid, startdatetime, completedby, completedat)
-        OUTPUT INSERTED.id, INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
-        VALUES (@userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME());
+        INSERT INTO dbo.[schedule_completions] (scheduleid, userid, groupid, startdatetime, completedby, completedat)
+        OUTPUT INSERTED.id, INSERTED.scheduleid, INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
+        VALUES (@scheduleid, @userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME());
 
         UPDATE dbo.[users]
         SET coins = coins + @coinsChange

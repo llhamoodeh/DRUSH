@@ -1,4 +1,5 @@
 class ScheduleItem {
+  final int id;
   final int userId;
   final int groupId;
   final DateTime startDateTime;
@@ -10,6 +11,7 @@ class ScheduleItem {
   final int? completedBy;
 
   const ScheduleItem({
+    required this.id,
     required this.userId,
     required this.groupId,
     required this.startDateTime,
@@ -23,6 +25,7 @@ class ScheduleItem {
 
   factory ScheduleItem.fromJson(Map<String, dynamic> json) {
     return ScheduleItem(
+      id: _asInt(json['id'] ?? json['scheduleid']),
       userId: _asInt(json['userid']),
       groupId: _asInt(json['groupid']),
       startDateTime: DateTime.parse(json['startdatetime'].toString()),

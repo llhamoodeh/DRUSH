@@ -272,12 +272,10 @@ class BackendService {
   Future<void> completeGroupTask({
     required String token,
     required int groupId,
-    required int userId,
-    required DateTime startDateTime,
+    required int scheduleId,
   }) async {
-    final encoded = Uri.encodeComponent(_formatDateTime(startDateTime));
     final url = Uri.parse(
-      '$apiBaseUrl/api/groups/$groupId/tasks/$userId/$encoded/complete',
+      '$apiBaseUrl/api/groups/$groupId/tasks/$scheduleId/complete',
     );
     _logRequest('POST', url);
     final response = await http.post(url, headers: _headers(token));
@@ -292,14 +290,9 @@ class BackendService {
 
   Future<void> completeScheduleTask({
     required String token,
-    required int userId,
-    required int groupId,
-    required DateTime startDateTime,
+    required int scheduleId,
   }) async {
-    final encoded = Uri.encodeComponent(_formatDateTime(startDateTime));
-    final url = Uri.parse(
-      '$apiBaseUrl/api/schedule/$userId/$groupId/$encoded/complete',
-    );
+    final url = Uri.parse('$apiBaseUrl/api/schedule/$scheduleId/complete');
     _logRequest('POST', url);
     final response = await http.post(url, headers: _headers(token));
     _logResponse(url, response);
@@ -404,36 +397,11 @@ class BackendService {
     required int createdBy,
     String? tips,
   }) async {
-    final effectiveGroupId = groupId ?? 0;
-    final keyChanged =
-        original.userId != userId ||
-        original.groupId != effectiveGroupId ||
-        !_sameMoment(original.startDateTime, startDateTime);
-
-    if (keyChanged) {
-      await deleteSchedule(
-        token: token,
-        userId: original.userId,
-        groupId: original.groupId,
-        startDateTime: original.startDateTime,
-      );
-
-      return createSchedule(
-        token: token,
-        userId: userId,
-        groupId: groupId,
-        startDateTime: startDateTime,
-        endDateTime: endDateTime,
-        createdAt: createdAt,
-        createdBy: createdBy,
-        tips: tips,
-      );
-    }
-
-    final url = Uri.parse(
-      '$apiBaseUrl/api/schedule/${original.userId}/${original.groupId}/${Uri.encodeComponent(_formatDateTime(original.startDateTime))}',
-    );
+    final url = Uri.parse('$apiBaseUrl/api/schedule/${original.id}');
     final payload = {
+      'userid': userId,
+      'groupid': groupId,
+      'startdatetime': _formatDateTime(startDateTime),
       'enddatetime': _formatDateTime(endDateTime),
       'createdat': _formatDateTime(createdAt),
       'createdby': createdBy,
@@ -459,13 +427,9 @@ class BackendService {
 
   Future<void> deleteSchedule({
     required String token,
-    required int userId,
-    required int groupId,
-    required DateTime startDateTime,
+    required int scheduleId,
   }) async {
-    final url = Uri.parse(
-      '$apiBaseUrl/api/schedule/$userId/$groupId/${Uri.encodeComponent(_formatDateTime(startDateTime))}',
-    );
+    final url = Uri.parse('$apiBaseUrl/api/schedule/$scheduleId');
     _logRequest('DELETE', url);
     final response = await http.delete(url, headers: _headers(token));
     _logResponse(url, response);
@@ -565,15 +529,6 @@ class BackendService {
 
     return '${value.year}-${twoDigits(value.month)}-${twoDigits(value.day)}T'
         '${twoDigits(value.hour)}:${twoDigits(value.minute)}:${twoDigits(value.second)}';
-  }
-
-  bool _sameMoment(DateTime left, DateTime right) {
-    return left.year == right.year &&
-        left.month == right.month &&
-        left.day == right.day &&
-        left.hour == right.hour &&
-        left.minute == right.minute &&
-        left.second == right.second;
   }
 
   String? _extractMessage(String responseBody) {

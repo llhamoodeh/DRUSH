@@ -303,8 +303,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
       await _backendService.completeGroupTask(
         token: widget.session.token,
         groupId: widget.group.id,
-        userId: task.schedule.userId,
-        startDateTime: task.schedule.startDateTime,
+        scheduleId: task.schedule.id,
       );
 
       if (!mounted) return;

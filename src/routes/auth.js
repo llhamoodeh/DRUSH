@@ -6,6 +6,85 @@ const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
 
+let ensureScheduleTablePromise;
+let ensureCompletionTablePromise;
+
+async function ensureScheduleTable() {
+  if (!ensureScheduleTablePromise) {
+    const pool = await getPool();
+    ensureScheduleTablePromise = pool.request().query(`
+      IF COL_LENGTH('dbo.schedule', 'id') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD id INT IDENTITY(1,1) NOT NULL
+      END
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM sys.key_constraints
+        WHERE type = 'PK'
+          AND parent_object_id = OBJECT_ID('dbo.schedule')
+      )
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD CONSTRAINT PK_schedule_id PRIMARY KEY (id)
+      END
+    `);
+  }
+
+  await ensureScheduleTablePromise;
+}
+
+async function ensureCompletionTable() {
+  await ensureScheduleTable();
+  if (!ensureCompletionTablePromise) {
+    const pool = await getPool();
+    ensureCompletionTablePromise = pool.request().query(`
+      IF OBJECT_ID('dbo.schedule_completions', 'U') IS NULL
+      BEGIN
+        CREATE TABLE dbo.[schedule_completions] (
+          id INT IDENTITY(1,1) PRIMARY KEY,
+          scheduleid INT NOT NULL,
+          userid INT NOT NULL,
+          groupid INT NOT NULL,
+          startdatetime DATETIME2 NOT NULL,
+          completedby INT NOT NULL,
+          completedat DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+        )
+      END
+
+      IF COL_LENGTH('dbo.schedule_completions', 'scheduleid') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule_completions]
+        ADD scheduleid INT NULL
+      END
+
+      UPDATE c
+      SET scheduleid = sch.id
+      FROM dbo.[schedule_completions] c
+      INNER JOIN dbo.[schedule] sch
+        ON sch.userid = c.userid
+       AND sch.startdatetime = c.startdatetime
+       AND (sch.groupid = c.groupid OR (c.groupid = 0 AND sch.groupid IS NULL))
+      WHERE c.scheduleid IS NULL
+
+      IF NOT EXISTS (
+        SELECT 1
+        FROM sys.indexes
+        WHERE name = 'UX_schedule_completions_scheduleid'
+          AND object_id = OBJECT_ID('dbo.schedule_completions')
+      )
+      BEGIN
+        CREATE UNIQUE INDEX [UX_schedule_completions_scheduleid]
+        ON dbo.[schedule_completions] (scheduleid)
+        WHERE scheduleid IS NOT NULL
+      END
+    `);
+  }
+
+  await ensureCompletionTablePromise;
+}
+
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -180,6 +259,7 @@ router.get('/me/streak', authMiddleware, async (req, res) => {
       return res.status(401).json({ message: 'Unauthorized.' });
     }
 
+    await ensureCompletionTable();
     const pool = await getPool();
 
     // Get all on-time completions for the user, ordered by date
@@ -190,9 +270,7 @@ router.get('/me/streak', authMiddleware, async (req, res) => {
         SELECT CONVERT(DATE, c.completedat) as completionDate
         FROM dbo.[schedule_completions] c
         INNER JOIN dbo.[schedule] s 
-          ON s.userid = c.userid 
-          AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
-          AND s.startdatetime = c.startdatetime
+          ON s.id = c.scheduleid
         WHERE c.userid = @userid 
           AND c.completedat <= s.enddatetime
         GROUP BY CONVERT(DATE, c.completedat)
@@ -211,9 +289,7 @@ router.get('/me/streak', authMiddleware, async (req, res) => {
           SUM(CASE WHEN c.completedat > s.enddatetime THEN 1 ELSE 0 END) as lateCount
         FROM dbo.[schedule_completions] c
         INNER JOIN dbo.[schedule] s 
-          ON s.userid = c.userid 
-          AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
-          AND s.startdatetime = c.startdatetime
+          ON s.id = c.scheduleid
         WHERE c.userid = @userid
       `);
 
@@ -284,6 +360,7 @@ router.get('/leaderboard', authMiddleware, async (req, res) => {
       return res.status(401).json({ message: 'Unauthorized.' });
     }
 
+    await ensureCompletionTable();
     const pool = await getPool();
 
     await pool.request().query(`
@@ -312,9 +389,7 @@ router.get('/leaderboard', authMiddleware, async (req, res) => {
         SUM(CASE WHEN c.completedat > s.enddatetime THEN 1 ELSE 0 END) AS lateCount
       FROM dbo.[schedule_completions] c
       INNER JOIN dbo.[schedule] s
-        ON s.userid = c.userid
-        AND (s.groupid = c.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
-        AND s.startdatetime = c.startdatetime
+        ON s.id = c.scheduleid
       GROUP BY c.userid, CONVERT(DATE, c.completedat)
       ORDER BY c.userid, CONVERT(DATE, c.completedat) ASC
     `);

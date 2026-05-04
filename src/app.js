@@ -9,6 +9,7 @@ const grouppartRoutes = require('./routes/grouppart');
 const scheduleRoutes = require('./routes/schedule');
 const massegesRoutes = require('./routes/masseges');
 const notificationsRoutes = require('./routes/notifications');
+const chatRoutes = require('./routes/chat');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/api/grouppart', authMiddleware, grouppartRoutes);
 app.use('/api/schedule', authMiddleware, scheduleRoutes);
 app.use('/api/masseges', authMiddleware, massegesRoutes);
 app.use('/api/notifications', authMiddleware, notificationsRoutes);
+app.use('/api/chat', authMiddleware, chatRoutes);
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {

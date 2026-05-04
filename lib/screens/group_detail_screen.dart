@@ -10,6 +10,7 @@ import '../models/schedule_item.dart';
 import 'calendar_screen.dart';
 import '../services/auth_service.dart';
 import '../services/backend_service.dart';
+import '../shared/celebration_overlay.dart';
 
 class GroupDetailScreen extends StatefulWidget {
   final AuthSession session;
@@ -313,16 +314,13 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
         await _coinPlayer.play(AssetSource('coin.mp3'));
       } catch (_) {}
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Congrats! 🎉🎊 Task completed before the deadline.')),
-      );
-
-      if (!mounted) {
-        return;
+      if (mounted) {
+        // show full-screen celebration overlay instead of snackbar
+        final entry = OverlayEntry(builder: (_) => const CelebrationOverlay());
+        Overlay.of(context)?.insert(entry);
+        await Future.delayed(const Duration(milliseconds: 2000));
+        entry.remove();
       }
-
-      await _loadData();
     } catch (err) {
       if (!mounted) {
         return;

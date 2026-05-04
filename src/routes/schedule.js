@@ -242,14 +242,29 @@ router.delete('/:id', async (req, res) => {
 
   try {
     await ensureScheduleTable();
+    await ensureCompletionTable();
     const pool = await getPool();
-    await pool
+    
+    // Get the schedule first to find its userid, groupid, startdatetime
+    const scheduleResult = await pool
       .request()
-      .input('scheduleid', sql.Int, scheduleId)
-      .query(`
-        DELETE FROM dbo.[schedule_completions]
-        WHERE scheduleid = @scheduleid
-      `);
+      .input('id', sql.Int, scheduleId)
+      .query(`SELECT userid, groupid, startdatetime FROM dbo.[schedule] WHERE id = @id`);
+    
+    if (scheduleResult.recordset.length > 0) {
+      const sched = scheduleResult.recordset[0];
+      await pool
+        .request()
+        .input('userid', sql.Int, sched.userid)
+        .input('groupid', sql.Int, sched.groupid ?? 0)
+        .input('startdatetime', sql.DateTime2, sched.startdatetime)
+        .query(`
+          DELETE FROM dbo.[schedule_completions]
+          WHERE userid = @userid
+            AND groupid = @groupid
+            AND startdatetime = @startdatetime
+        `);
+    }
 
     const result = await pool
       .request()
@@ -306,11 +321,15 @@ router.post('/:id/complete', async (req, res) => {
 
     const existingResult = await pool
       .request()
-      .input('scheduleid', sql.Int, scheduleId)
+      .input('userid', sql.Int, taskUserId)
+      .input('groupid', sql.Int, scheduleGroupId)
+      .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .query(`
-        SELECT id, scheduleid, userid, groupid, startdatetime, completedby, completedat
+        SELECT userid, groupid, startdatetime, completedby, completedat
         FROM dbo.[schedule_completions]
-        WHERE scheduleid = @scheduleid
+        WHERE userid = @userid
+          AND groupid = @groupid
+          AND startdatetime = @startdatetime
       `);
 
     if (existingResult.recordset.length > 0) {
@@ -326,15 +345,14 @@ router.post('/:id/complete', async (req, res) => {
 
     const insertResult = await pool
       .request()
-      .input('scheduleid', sql.Int, scheduleId)
       .input('userid', sql.Int, taskUserId)
       .input('groupid', sql.Int, scheduleGroupId)
       .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .input('completedby', sql.Int, taskUserId)
       .query(`
-        INSERT INTO dbo.[schedule_completions] (scheduleid, userid, groupid, startdatetime, completedby, completedat)
-        OUTPUT INSERTED.id, INSERTED.scheduleid, INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
-        VALUES (@scheduleid, @userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME())
+        INSERT INTO dbo.[schedule_completions] (userid, groupid, startdatetime, completedby, completedat)
+        OUTPUT INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
+        VALUES (@userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME())
       `);
 
     return res.json({ message: 'Congrats! 🎉🎊', completion: insertResult.recordset[0] });

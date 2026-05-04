@@ -370,11 +370,15 @@ router.post('/:id/tasks/:scheduleId/complete', async (req, res) => {
 
     const existingResult = await pool
       .request()
-      .input('scheduleid', sql.Int, scheduleId)
+      .input('userid', sql.Int, taskUserId)
+      .input('groupid', sql.Int, groupId)
+      .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .query(`
-        SELECT id, scheduleid, userid, groupid, startdatetime, completedby, completedat
+        SELECT userid, groupid, startdatetime, completedby, completedat
         FROM dbo.[schedule_completions]
-        WHERE scheduleid = @scheduleid
+        WHERE userid = @userid
+          AND groupid = @groupid
+          AND startdatetime = @startdatetime
       `);
 
     if (existingResult.recordset.length > 0) {
@@ -392,16 +396,15 @@ router.post('/:id/tasks/:scheduleId/complete', async (req, res) => {
 
     const insertResult = await pool
       .request()
-      .input('scheduleid', sql.Int, scheduleId)
       .input('userid', sql.Int, taskUserId)
       .input('groupid', sql.Int, groupId)
       .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .input('completedby', sql.Int, taskUserId)
       .input('coinsChange', sql.Int, coinsChange)
       .query(`
-        INSERT INTO dbo.[schedule_completions] (scheduleid, userid, groupid, startdatetime, completedby, completedat)
-        OUTPUT INSERTED.id, INSERTED.scheduleid, INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
-        VALUES (@scheduleid, @userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME());
+        INSERT INTO dbo.[schedule_completions] (userid, groupid, startdatetime, completedby, completedat)
+        OUTPUT INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
+        VALUES (@userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME());
 
         UPDATE dbo.[users]
         SET coins = coins + @coinsChange

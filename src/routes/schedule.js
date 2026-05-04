@@ -68,11 +68,20 @@ function parseNullableGroupId(value) {
 }
 
 router.get('/', async (req, res) => {
+  const userId = Number(req.user?.id);
+
+  if (!Number.isFinite(userId)) {
+    return res.status(401).json({ message: 'Unauthorized.' });
+  }
+
   try {
     await ensureScheduleTable();
     await ensureCompletionTable();
     const pool = await getPool();
-    const result = await pool.request().query(`
+    const result = await pool
+      .request()
+      .input('userid', sql.Int, userId)
+      .query(`
       SELECT
         s.id,
         s.userid,
@@ -89,6 +98,17 @@ router.get('/', async (req, res) => {
         ON c.userid = s.userid
        AND c.startdatetime = s.startdatetime
        AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
+      WHERE s.userid = @userid
+         OR (
+           s.groupid IS NOT NULL
+           AND s.groupid <> 0
+           AND EXISTS (
+             SELECT 1
+             FROM dbo.[grouppart] gp
+             WHERE gp.groupid = s.groupid
+               AND gp.userid = @userid
+           )
+         )
       ORDER BY s.startdatetime DESC
     `);
     return res.json(result.recordset);
@@ -100,9 +120,14 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   const scheduleId = Number(req.params.id);
+  const userId = Number(req.user?.id);
 
   if (!Number.isFinite(scheduleId)) {
     return res.status(400).json({ message: 'id must be a number.' });
+  }
+
+  if (!Number.isFinite(userId)) {
+    return res.status(401).json({ message: 'Unauthorized.' });
   }
 
   try {
@@ -112,6 +137,7 @@ router.get('/:id', async (req, res) => {
     const result = await pool
       .request()
       .input('id', sql.Int, scheduleId)
+      .input('userid', sql.Int, userId)
       .query(`
         SELECT
           s.id,
@@ -126,8 +152,23 @@ router.get('/:id', async (req, res) => {
           c.completedby
         FROM dbo.[schedule] s
         LEFT JOIN dbo.[schedule_completions] c
-          ON c.scheduleid = s.id
+          ON c.userid = s.userid
+         AND c.startdatetime = s.startdatetime
+         AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
         WHERE s.id = @id
+          AND (
+            s.userid = @userid
+            OR (
+              s.groupid IS NOT NULL
+              AND s.groupid <> 0
+              AND EXISTS (
+                SELECT 1
+                FROM dbo.[grouppart] gp
+                WHERE gp.groupid = s.groupid
+                  AND gp.userid = @userid
+              )
+            )
+          )
       `);
 
     if (result.recordset.length === 0) {

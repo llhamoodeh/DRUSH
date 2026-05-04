@@ -83,9 +83,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     try {
       final groups = await _backendService.fetchGroups(widget.session.token);
-      final schedules = await _backendService.fetchSchedules(
+      var schedules = await _backendService.fetchSchedules(
         widget.session.token,
       );
+      // Filter schedules to only the user's personal items or groups they're a member of
+      final userId = widget.session.user.id;
+      final groupIds = groups.map((g) => g.id).toSet();
+      schedules = schedules
+          .where((s) => s.userId == userId || (s.groupId != 0 && groupIds.contains(s.groupId)))
+          .toList();
       schedules.sort(
         (left, right) => left.startDateTime.compareTo(right.startDateTime),
       );

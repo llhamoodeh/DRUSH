@@ -38,9 +38,15 @@ class _HomeScreenState extends State<HomeScreen> {
       widget.session.token,
       userId: widget.session.user.id,
     );
-    final schedules = await _backendService.fetchSchedules(
+    var schedules = await _backendService.fetchSchedules(
       widget.session.token,
     );
+    // Show only personal schedules or those belonging to groups the user is a member of
+    final userId = widget.session.user.id;
+    final groupIds = groups.map((g) => g.id).toSet();
+    schedules = schedules
+        .where((s) => s.userId == userId || (s.groupId != 0 && groupIds.contains(s.groupId)))
+        .toList();
     final coins = await _backendService.fetchUserCoins(
       widget.session.token,
     );
@@ -333,7 +339,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               subtitle: 'Your coin balance',
                               accentColor: const Color(0xFFFF9800),
                               iconPath: 'assets/coin.png',
-                              centerValue: true,
+                              centerValue: false,
+                              valueAlignment: MainAxisAlignment.start,
                             ),
                             _MetricCard(
                               title: 'Groups',
@@ -779,6 +786,7 @@ class _MetricCard extends StatelessWidget {
   final VoidCallback? onActionTap;
   final String? iconPath;
   final bool centerValue;
+  final MainAxisAlignment valueAlignment;
 
   const _MetricCard({
     required this.title,
@@ -789,6 +797,7 @@ class _MetricCard extends StatelessWidget {
     this.onActionTap,
     this.iconPath,
     this.centerValue = false,
+    this.valueAlignment = MainAxisAlignment.start,
   });
 
   @override
@@ -844,26 +853,42 @@ class _MetricCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Row(
-            mainAxisAlignment:
-                centerValue ? MainAxisAlignment.center : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              if (iconPath != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Image.asset(
-                    iconPath!,
-                    width: 28,
-                    height: 28,
-                    fit: BoxFit.contain,
+              Expanded(
+                child: Align(
+                  alignment: centerValue
+                      ? Alignment.center
+                      : (valueAlignment == MainAxisAlignment.end
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft),
+                  child: RichText(
+                    text: TextSpan(
+                      children: [
+                        if (iconPath != null)
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Image.asset(
+                                iconPath!,
+                                width: 30,
+                                height: 30,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                          ),
+                        TextSpan(
+                          text: value,
+                          style: GoogleFonts.playfairDisplay(
+                            fontSize: 30,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFFE53935),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              Text(
-                value,
-                style: GoogleFonts.playfairDisplay(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFFE53935),
                 ),
               ),
             ],

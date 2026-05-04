@@ -310,7 +310,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
       );
 
       try {
-        await _coinPlayer.play(AssetSource('coin.mp4'));
+        await _coinPlayer.play(AssetSource('coin.mp3'));
       } catch (_) {}
 
       if (!mounted) return;

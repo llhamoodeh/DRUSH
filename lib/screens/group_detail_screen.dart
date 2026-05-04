@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../models/group_item.dart';
 import '../models/group_leaderboard_entry.dart';
@@ -30,6 +31,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
 
   final BackendService _backendService = const BackendService();
   final TextEditingController _emailController = TextEditingController();
+  final AudioPlayer _coinPlayer = AudioPlayer();
 
   bool _loading = true;
   bool _updating = false;
@@ -50,6 +52,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
   @override
   void dispose() {
     _emailController.dispose();
+    _coinPlayer.dispose();
     super.dispose();
   }
 
@@ -305,6 +308,10 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
         groupId: widget.group.id,
         scheduleId: task.schedule.id,
       );
+
+      try {
+        await _coinPlayer.play(AssetSource('coin.mp4'));
+      } catch (_) {}
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

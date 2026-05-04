@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../models/group_item.dart';
 import '../models/schedule_item.dart';
@@ -31,6 +32,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   final BackendService _backendService = const BackendService();
   final TextEditingController _tipsController = TextEditingController();
+  final AudioPlayer _coinPlayer = AudioPlayer();
 
   bool _loading = true;
   bool _saving = false;
@@ -72,6 +74,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   void dispose() {
     _tipsController.dispose();
+    _coinPlayer.dispose();
     super.dispose();
   }
 
@@ -938,6 +941,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
           scheduleId: schedule.id,
         );
       }
+
+      try {
+        await _coinPlayer.play(AssetSource('coin.mp4'));
+      } catch (_) {}
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

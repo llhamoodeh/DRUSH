@@ -5,6 +5,7 @@ const router = express.Router();
 
 let ensureScheduleTablePromise;
 let ensureCompletionTablePromise;
+let ensureCoinsColumnPromise;
 
 async function ensureScheduleTable() {
   if (!ensureScheduleTablePromise) {
@@ -14,6 +15,12 @@ async function ensureScheduleTable() {
       BEGIN
         ALTER TABLE dbo.[schedule]
         ADD id INT IDENTITY(1,1) NOT NULL
+      END
+
+      IF COL_LENGTH('dbo.schedule', 'penalized') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD penalized BIT NOT NULL DEFAULT 0
       END
 
       IF NOT EXISTS (
@@ -30,6 +37,64 @@ async function ensureScheduleTable() {
   }
 
   await ensureScheduleTablePromise;
+}
+
+async function ensureCoinsColumn() {
+  if (!ensureCoinsColumnPromise) {
+    const pool = await getPool();
+    ensureCoinsColumnPromise = pool.request().query(`
+      IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'users'
+          AND COLUMN_NAME = 'coins'
+      )
+      BEGIN
+        ALTER TABLE dbo.[users]
+        ADD coins INT NOT NULL DEFAULT 0
+      END
+    `);
+  }
+
+  await ensureCoinsColumnPromise;
+}
+
+async function applyOverduePenalties(pool, userId) {
+  const request = pool.request().input('now', sql.DateTime2, new Date());
+
+  if (Number.isFinite(userId)) {
+    request.input('userid', sql.Int, userId);
+  }
+
+  await request.query(`
+    DECLARE @overdue TABLE (id INT, userid INT);
+
+    INSERT INTO @overdue (id, userid)
+    SELECT s.id, s.userid
+    FROM dbo.[schedule] s
+    LEFT JOIN dbo.[schedule_completions] c
+      ON c.userid = s.userid
+     AND c.startdatetime = s.startdatetime
+     AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
+    WHERE s.enddatetime < @now
+      AND (s.penalized = 0 OR s.penalized IS NULL)
+      AND c.userid IS NULL
+      ${Number.isFinite(userId) ? 'AND s.userid = @userid' : ''};
+
+    UPDATE u
+    SET coins = coins - (o.cnt * 10)
+    FROM dbo.[users] u
+    INNER JOIN (
+      SELECT userid, COUNT(*) AS cnt
+      FROM @overdue
+      GROUP BY userid
+    ) o ON o.userid = u.id;
+
+    UPDATE s
+    SET penalized = 1
+    FROM dbo.[schedule] s
+    INNER JOIN @overdue o ON o.id = s.id;
+  `);
 }
 
 async function ensureCompletionTable() {
@@ -77,7 +142,9 @@ router.get('/', async (req, res) => {
   try {
     await ensureScheduleTable();
     await ensureCompletionTable();
+    await ensureCoinsColumn();
     const pool = await getPool();
+    await applyOverduePenalties(pool, userId);
     const result = await pool
       .request()
       .input('userid', sql.Int, userId)
@@ -133,7 +200,9 @@ router.get('/:id', async (req, res) => {
   try {
     await ensureScheduleTable();
     await ensureCompletionTable();
+    await ensureCoinsColumn();
     const pool = await getPool();
+    await applyOverduePenalties(pool, userId);
     const result = await pool
       .request()
       .input('id', sql.Int, scheduleId)
@@ -334,6 +403,7 @@ router.post('/:id/complete', async (req, res) => {
 
   try {
     await ensureCompletionTable();
+    await ensureCoinsColumn();
     const pool = await getPool();
     const scheduleResult = await pool
       .request()
@@ -384,16 +454,22 @@ router.post('/:id/complete', async (req, res) => {
       return res.status(400).json({ message: 'Cannot complete task after the deadline.' });
     }
 
+    const coinsChange = 10;
     const insertResult = await pool
       .request()
       .input('userid', sql.Int, taskUserId)
       .input('groupid', sql.Int, scheduleGroupId)
       .input('startdatetime', sql.DateTime2, schedule.startdatetime)
       .input('completedby', sql.Int, taskUserId)
+      .input('coinsChange', sql.Int, coinsChange)
       .query(`
         INSERT INTO dbo.[schedule_completions] (userid, groupid, startdatetime, completedby, completedat)
         OUTPUT INSERTED.userid, INSERTED.groupid, INSERTED.startdatetime, INSERTED.completedby, INSERTED.completedat
         VALUES (@userid, @groupid, @startdatetime, @completedby, SYSUTCDATETIME())
+
+        UPDATE dbo.[users]
+        SET coins = coins + @coinsChange
+        WHERE id = @userid
       `);
 
     return res.json({ message: 'Congrats! 🎉🎊', completion: insertResult.recordset[0] });

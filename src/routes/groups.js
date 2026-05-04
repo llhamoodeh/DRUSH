@@ -17,6 +17,12 @@ async function ensureScheduleTable() {
         ADD id INT IDENTITY(1,1) NOT NULL
       END
 
+      IF COL_LENGTH('dbo.schedule', 'penalized') IS NULL
+      BEGIN
+        ALTER TABLE dbo.[schedule]
+        ADD penalized BIT NOT NULL DEFAULT 0
+      END
+
       IF NOT EXISTS (
         SELECT 1
         FROM sys.key_constraints

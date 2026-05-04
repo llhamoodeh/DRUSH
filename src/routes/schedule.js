@@ -40,52 +40,13 @@ async function ensureCompletionTable() {
       IF OBJECT_ID('dbo.schedule_completions', 'U') IS NULL
       BEGIN
         CREATE TABLE dbo.[schedule_completions] (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          scheduleid INT NOT NULL,
           userid INT NOT NULL,
           groupid INT NOT NULL,
           startdatetime DATETIME2 NOT NULL,
           completedby INT NOT NULL,
-          completedat DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+          completedat DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+          PRIMARY KEY (userid, groupid, startdatetime)
         )
-      END
-
-      IF COL_LENGTH('dbo.schedule_completions', 'scheduleid') IS NULL
-      BEGIN
-        ALTER TABLE dbo.[schedule_completions]
-        ADD scheduleid INT NULL
-      END
-
-      UPDATE c
-      SET scheduleid = sch.id
-      FROM dbo.[schedule_completions] c
-      INNER JOIN dbo.[schedule] sch
-        ON sch.userid = c.userid
-       AND sch.startdatetime = c.startdatetime
-       AND (sch.groupid = c.groupid OR (c.groupid = 0 AND sch.groupid IS NULL))
-      WHERE c.scheduleid IS NULL
-
-      IF NOT EXISTS (
-        SELECT 1
-        FROM sys.indexes
-        WHERE name = 'UX_schedule_completions_task'
-          AND object_id = OBJECT_ID('dbo.schedule_completions')
-      )
-      BEGIN
-        CREATE UNIQUE INDEX [UX_schedule_completions_task]
-        ON dbo.[schedule_completions] (userid, groupid, startdatetime)
-      END
-
-      IF NOT EXISTS (
-        SELECT 1
-        FROM sys.indexes
-        WHERE name = 'UX_schedule_completions_scheduleid'
-          AND object_id = OBJECT_ID('dbo.schedule_completions')
-      )
-      BEGIN
-        CREATE UNIQUE INDEX [UX_schedule_completions_scheduleid]
-        ON dbo.[schedule_completions] (scheduleid)
-        WHERE scheduleid IS NOT NULL
       END
     `);
   }
@@ -125,11 +86,14 @@ router.get('/', async (req, res) => {
         c.completedby
       FROM dbo.[schedule] s
       LEFT JOIN dbo.[schedule_completions] c
-        ON c.scheduleid = s.id
-      ORDER BY startdatetime DESC
+        ON c.userid = s.userid
+       AND c.startdatetime = s.startdatetime
+       AND (c.groupid = s.groupid OR (c.groupid = 0 AND s.groupid IS NULL))
+      ORDER BY s.startdatetime DESC
     `);
     return res.json(result.recordset);
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ message: err.message });
   }
 });

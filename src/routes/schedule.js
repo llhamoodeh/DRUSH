@@ -1,5 +1,10 @@
 const express = require('express');
 const { sql, getPool } = require('../config/db');
+const {
+  completionUpload,
+  getSingleFile,
+  validateTaskCompletion
+} = require('../services/taskPhotoValidation');
 
 const router = express.Router();
 
@@ -394,8 +399,14 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-router.post('/:id/complete', async (req, res) => {
-  const scheduleId = Number(req.params.id);
+router.post(
+  '/:id/complete',
+  completionUpload.fields([
+    { name: 'beforePhoto', maxCount: 1 },
+    { name: 'afterPhoto', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    const scheduleId = Number(req.params.id);
 
   if (!Number.isFinite(scheduleId)) {
     return res.status(400).json({ message: 'id must be a number.' });
@@ -409,7 +420,7 @@ router.post('/:id/complete', async (req, res) => {
       .request()
       .input('id', sql.Int, scheduleId)
       .query(`
-        SELECT id, userid, groupid, startdatetime, enddatetime
+        SELECT id, userid, groupid, startdatetime, enddatetime, tips
         FROM dbo.[schedule]
         WHERE id = @id
       `);
@@ -452,6 +463,18 @@ router.post('/:id/complete', async (req, res) => {
 
     if (completionTime > deadline) {
       return res.status(400).json({ message: 'Cannot complete task after the deadline.' });
+    }
+
+    const validation = await validateTaskCompletion({
+      taskDescription: schedule.tips || '',
+      beforePhoto: getSingleFile(req.files, 'beforePhoto'),
+      afterPhoto: getSingleFile(req.files, 'afterPhoto')
+    });
+
+    if (!validation.ok) {
+      return res
+        .status(validation.status || 400)
+        .json({ message: validation.message || 'Task completion could not be verified.' });
     }
 
     const coinsChange = 10;

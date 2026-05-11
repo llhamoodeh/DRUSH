@@ -10,6 +10,7 @@ const scheduleRoutes = require('./routes/schedule');
 const massegesRoutes = require('./routes/masseges');
 const notificationsRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
+const vouchersRoutes = require('./routes/vouchers');
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use('/api/schedule', authMiddleware, scheduleRoutes);
 app.use('/api/masseges', authMiddleware, massegesRoutes);
 app.use('/api/notifications', authMiddleware, notificationsRoutes);
 app.use('/api/chat', authMiddleware, chatRoutes);
+app.use('/api/vouchers', authMiddleware, vouchersRoutes);
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {

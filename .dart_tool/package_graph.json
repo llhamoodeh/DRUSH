@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "drush_app",
-      "version": "1.0.0+1",
+      "version": "1.0.0+103",
       "dependencies": [
         "audioplayers",
         "cupertino_icons",

@@ -596,4 +596,56 @@ class BackendService {
         .map(StreakLeaderboardEntry.fromJson)
         .toList();
   }
+
+  // ── Vouchers ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> fetchVouchers(String token) async {
+    final url = Uri.parse('$apiBaseUrl/api/vouchers');
+    _logRequest('GET', url);
+    final response = await http.get(url, headers: _headers(token));
+    _logResponse(url, response);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        _extractMessage(response.body) ?? 'Failed to load vouchers.',
+      );
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> redeemVoucher({
+    required String token,
+    required String voucherId,
+  }) async {
+    final url = Uri.parse('$apiBaseUrl/api/vouchers/$voucherId/redeem');
+    _logRequest('POST', url);
+    final response = await http.post(url, headers: _headers(token));
+    _logResponse(url, response);
+
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+
+    final msg = _extractMessage(response.body) ?? 'Failed to redeem voucher.';
+    throw ApiException(response.statusCode, msg);
+  }
+
+  Future<List<Map<String, dynamic>>> fetchRedemptionHistory(
+    String token,
+  ) async {
+    final url = Uri.parse('$apiBaseUrl/api/vouchers/history');
+    _logRequest('GET', url);
+    final response = await http.get(url, headers: _headers(token));
+    _logResponse(url, response);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        _extractMessage(response.body) ?? 'Failed to load history.',
+      );
+    }
+
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.whereType<Map<String, dynamic>>().toList();
+  }
 }

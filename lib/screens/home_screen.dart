@@ -9,6 +9,7 @@ import 'calendar_screen.dart';
 import 'chat_screen.dart';
 import 'groups_screen.dart';
 import 'streak_screen.dart';
+import 'vouchers_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthSession session;
@@ -100,6 +101,21 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => StreakScreen(session: widget.session),
+      ),
+    );
+
+    if (mounted) {
+      _reloadData();
+    }
+  }
+
+  Future<void> _openVouchers(int coins) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VouchersScreen(
+          session: widget.session,
+          coins: coins,
+        ),
       ),
     );
 
@@ -341,6 +357,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               iconPath: 'assets/coin.png',
                               centerValue: false,
                               valueAlignment: MainAxisAlignment.start,
+                              actionLabel: 'Redeem',
+                              onActionTap: () => _openVouchers(data.coins),
                             ),
                             _MetricCard(
                               title: 'Groups',

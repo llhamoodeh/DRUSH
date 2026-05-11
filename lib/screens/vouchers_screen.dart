@@ -199,25 +199,26 @@ class _VouchersScreenState extends State<VouchersScreen> with TickerProviderStat
       body: NestedScrollView(
         headerSliverBuilder: (context, _) => [
           SliverAppBar(
-            expandedHeight: 200, pinned: true, backgroundColor: redDark,
+            expandedHeight: 220, pinned: true, backgroundColor: redDark,
             leading: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+            title: Text('Rewards Store', style: GoogleFonts.playfairDisplay(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 20)),
+            centerTitle: true,
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: const BoxDecoration(gradient: LinearGradient(colors: [redDark, red, Color(0xFFFF5252)], begin: Alignment.topLeft, end: Alignment.bottomRight)),
                 child: SafeArea(
                   child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                     const SizedBox(height: 20),
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Image.asset('assets/coin.png', width: 36, height: 36, fit: BoxFit.contain),
+                    Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.center, children: [
+                      SizedBox(width: 42, height: 42, child: Center(child: Image.asset('assets/coin.png', width: 36, height: 36, fit: BoxFit.contain))),
                       const SizedBox(width: 10),
-                      Text('$_coins', style: GoogleFonts.playfairDisplay(fontSize: 42, fontWeight: FontWeight.w700, color: Colors.white)),
+                      SizedBox(height: 42, child: Center(child: Transform.translate(offset: const Offset(0, -3), child: Text('$_coins', style: GoogleFonts.playfairDisplay(fontSize: 42, height: 1, fontWeight: FontWeight.w700, color: Colors.white))))),
                     ]),
                     const SizedBox(height: 4),
                     Text('coins available', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.8))),
                   ]),
                 ),
               ),
-              title: Text('Rewards Store', style: GoogleFonts.playfairDisplay(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 20)),
               centerTitle: true,
             ),
             bottom: PreferredSize(

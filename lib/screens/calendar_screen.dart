@@ -1,11 +1,16 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/group_item.dart';
 import '../models/schedule_item.dart';
 import '../services/auth_service.dart';
 import '../services/backend_service.dart';
+import '../services/task_verification_service.dart';
 import '../shared/celebration_overlay.dart';
 
 class CalendarScreen extends StatefulWidget {
@@ -32,6 +37,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   static const Color redSoft = Color(0xFFFFF5F5);
 
   final BackendService _backendService = const BackendService();
+  final TaskVerificationService _verificationService =
+      const TaskVerificationService();
   final TextEditingController _tipsController = TextEditingController();
   final AudioPlayer _coinPlayer = AudioPlayer();
 
@@ -912,6 +919,34 @@ class _CalendarScreenState extends State<CalendarScreen> {
       return;
     }
 
+    final now = DateTime.now();
+    if (!now.isBefore(schedule.endDateTime)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot complete task after the deadline.'),
+        ),
+      );
+      return;
+    }
+
+    // Show the photo-verification wizard. It returns true only when the AI
+    // confirms at least 50 % task completion.
+    final verified = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _PhotoVerificationSheet(
+        verificationService: _verificationService,
+        taskDescription: schedule.tips ?? 'General task',
+      ),
+    );
+
+    if (verified != true) {
+      return; // user cancelled or verification failed
+    }
+
+    // Proceed with the actual completion now that AI approved.
     setState(() {
       _completingTask = true;
       _error = null;
@@ -919,17 +954,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
 
     try {
-      final now = DateTime.now();
-      if (!now.isBefore(schedule.endDateTime)) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cannot complete task after the deadline.'),
-          ),
-        );
-        return;
-      }
-
       if (schedule.groupId == 0) {
         await _backendService.completeScheduleTask(
           token: widget.session.token,
@@ -949,7 +973,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
       if (mounted) {
         final entry = OverlayEntry(builder: (_) => const CelebrationOverlay());
-        Overlay.of(context)?.insert(entry);
+        Overlay.of(context).insert(entry);
         await Future.delayed(const Duration(milliseconds: 2000));
         entry.remove();
       }
@@ -1628,6 +1652,520 @@ class _ScheduleTile extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Photo-verification wizard shown before marking a task complete.
+// ────────────────────────────────────────────────────────────────────────────
+
+class _PhotoVerificationSheet extends StatefulWidget {
+  final TaskVerificationService verificationService;
+  final String taskDescription;
+
+  const _PhotoVerificationSheet({
+    required this.verificationService,
+    required this.taskDescription,
+  });
+
+  @override
+  State<_PhotoVerificationSheet> createState() =>
+      _PhotoVerificationSheetState();
+}
+
+class _PhotoVerificationSheetState extends State<_PhotoVerificationSheet> {
+  static const Color _redDark = Color(0xFFB71C1C);
+  static const Color _redSoft = Color(0xFFFFF5F5);
+  static const Color _green = Color(0xFF2E7D32);
+
+  final ImagePicker _picker = ImagePicker();
+
+  // 0 = pick before, 1 = pick after, 2 = verifying, 3 = result
+  int _step = 0;
+  File? _beforeImage;
+  File? _afterImage;
+  String? _beforeCaption;
+  String? _afterCaption;
+  bool? _approved;
+  String _resultMessage = '';
+  String? _error;
+
+  Future<void> _pickImage({required bool isBefore}) async {
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select photo source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    final picked = await _picker.pickImage(source: source, imageQuality: 80);
+    if (picked == null) return;
+
+    setState(() {
+      if (isBefore) {
+        _beforeImage = File(picked.path);
+        _step = 1; // advance to "pick after"
+      } else {
+        _afterImage = File(picked.path);
+        _runVerification(); // both images ready
+      }
+    });
+  }
+
+  Future<void> _runVerification() async {
+    setState(() {
+      _step = 2;
+      _error = null;
+    });
+
+    try {
+      // 1. Analyze both images
+      _beforeCaption = await widget.verificationService.analyzeImage(
+        _beforeImage!,
+      );
+      _afterCaption = await widget.verificationService.analyzeImage(
+        _afterImage!,
+      );
+
+      // 2. Ask the chat endpoint to compare
+      final result = await widget.verificationService.validateTaskCompletion(
+        beforeCaption: _beforeCaption!,
+        afterCaption: _afterCaption!,
+        taskDescription: widget.taskDescription,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _step = 3;
+        _approved = result.approved;
+        _resultMessage = result.reason;
+      });
+    } on TimeoutException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _step = 3;
+        _approved = false;
+        _error = err.message ?? err.toString();
+        _resultMessage =
+            'Verification timed out. Please try again on a stable connection.';
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _step = 3;
+        _approved = false;
+        _error = err.toString();
+        _resultMessage = 'Verification failed. Please try again.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+
+            // Title
+            Text(
+              'Verify task completion',
+              style: GoogleFonts.manrope(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: _redDark,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Upload a photo before and after to verify your work.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(fontSize: 13, color: Colors.black54),
+            ),
+            const SizedBox(height: 20),
+
+            // Step indicators
+            _buildStepIndicator(),
+            const SizedBox(height: 24),
+
+            // Step content
+            if (_step == 0) _buildPickStep(isBefore: true),
+            if (_step == 1) _buildPickStep(isBefore: false),
+            if (_step == 2) _buildVerifying(),
+            if (_step == 3) _buildResult(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepIndicator() {
+    Widget dot(int index, String label) {
+      final isActive = _step >= index;
+      final isCurrent = _step == index;
+      return Column(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            width: isCurrent ? 34 : 28,
+            height: isCurrent ? 34 : 28,
+            decoration: BoxDecoration(
+              color: isActive ? _redDark : Colors.grey[200],
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: isActive && _step > index
+                  ? const Icon(Icons.check, color: Colors.white, size: 16)
+                  : Text(
+                      '${index + 1}',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: isActive ? Colors.white : Colors.black38,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: isActive ? _redDark : Colors.black38,
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget connector(int afterIndex) {
+      return Expanded(
+        child: Container(
+          height: 2,
+          margin: const EdgeInsets.only(bottom: 16),
+          color: _step > afterIndex ? _redDark : Colors.grey[200],
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        dot(0, 'Before'),
+        connector(0),
+        dot(1, 'After'),
+        connector(1),
+        dot(2, 'Verify'),
+        connector(2),
+        dot(3, 'Result'),
+      ],
+    );
+  }
+
+  Widget _buildPickStep({required bool isBefore}) {
+    final image = isBefore ? _beforeImage : _afterImage;
+    final label = isBefore ? 'Before' : 'After';
+
+    return Column(
+      children: [
+        // Show the before image preview in step 2 (pick after)
+        if (!isBefore && _beforeImage != null) ...[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.file(
+              _beforeImage!,
+              height: 120,
+              width: double.infinity,
+              fit: BoxFit.cover,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Before photo ✓',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: _green,
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        // Current pick area
+        GestureDetector(
+          onTap: () => _pickImage(isBefore: isBefore),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            width: double.infinity,
+            height: image != null ? 200 : 160,
+            decoration: BoxDecoration(
+              color: _redSoft,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _redDark.withValues(alpha: 0.2),
+                width: 2,
+              ),
+            ),
+            child: image != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.file(image, fit: BoxFit.cover),
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.add_a_photo_rounded,
+                        size: 42,
+                        color: _redDark.withValues(alpha: 0.5),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Tap to upload $label photo',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _redDark.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+
+        if (image != null) ...[
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                if (isBefore) {
+                  setState(() => _step = 1);
+                } else {
+                  _runVerification();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _redDark,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: Text(
+                isBefore ? 'Next: Upload After photo' : 'Verify completion',
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildVerifying() {
+    return Column(
+      children: [
+        const SizedBox(height: 20),
+        const SizedBox(
+          width: 48,
+          height: 48,
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFB71C1C)),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Analyzing your photos…',
+          style: GoogleFonts.manrope(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Our AI is comparing the before and after images\nwith your task description.',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.manrope(fontSize: 13, color: Colors.black54),
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _buildResult() {
+    final approved = _approved == true;
+
+    return Column(
+      children: [
+        Icon(
+          approved ? Icons.check_circle_rounded : Icons.cancel_rounded,
+          size: 56,
+          color: approved ? _green : _redDark,
+        ),
+        const SizedBox(height: 14),
+        Text(
+          approved ? 'Task verified!' : 'Verification failed',
+          style: GoogleFonts.manrope(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            color: approved ? _green : _redDark,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: approved
+                ? const Color(0xFFE8F5E9)
+                : _redSoft,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(
+            _resultMessage,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: GoogleFonts.manrope(fontSize: 12, color: Colors.red),
+          ),
+        ],
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop(approved);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: approved ? _green : _redDark,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: Text(
+              approved ? 'Complete task' : 'Close',
+              style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+
+        if (!approved) ...[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () {
+                setState(() {
+                  _step = 0;
+                  _beforeImage = null;
+                  _afterImage = null;
+                  _beforeCaption = null;
+                  _afterCaption = null;
+                  _approved = null;
+                  _resultMessage = '';
+                  _error = null;
+                });
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _redDark,
+                side: const BorderSide(color: _redDark),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: Text(
+                'Try again with new photos',
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _captionChip(String label, String caption) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _redDark,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            caption,
+            style: GoogleFonts.manrope(fontSize: 12, color: Colors.black87),
+          ),
+        ),
+      ],
     );
   }
 }

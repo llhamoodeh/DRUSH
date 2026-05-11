@@ -59,9 +59,9 @@ async function seedVouchers(pool) {
   if (countResult.recordset[0].cnt > 0) return;
 
   const vouchers = [
-    { id: 'v1',  storeName: 'Starbucks',       description: 'Free tall drink of your choice',          coinCost: 50,  category: 'Food & Drinks',  discount: 'Free Drink', expiryNote: 'Valid for 30 days',  iconName: 'coffee',           brandColor: '00704A' },
-    { id: 'v2',  storeName: "McDonald's",       description: 'Buy 1 Get 1 Free on any meal combo',      coinCost: 35,  category: 'Food & Drinks',  discount: 'BOGO',       expiryNote: 'Valid for 14 days',  iconName: 'fastfood',         brandColor: 'DA291C' },
-    { id: 'v3',  storeName: "Domino's Pizza",   description: '25% off your next order',                 coinCost: 40,  category: 'Food & Drinks',  discount: '25% OFF',    expiryNote: 'Valid for 21 days',  iconName: 'local_pizza',      brandColor: '006491' },
+    { id: 'v1',  storeName: 'Caffein Lab',      description: 'Free hot or iced latte of your choice',   coinCost: 50,  category: 'Food & Drinks',  discount: 'Free Drink', expiryNote: 'Valid for 30 days',  iconName: 'coffee',           brandColor: '0B6B5D' },
+    { id: 'v2',  storeName: 'Shawarma Reem',    description: 'Buy 1 Get 1 Free shawarma combo',         coinCost: 35,  category: 'Food & Drinks',  discount: 'BOGO',       expiryNote: 'Valid for 14 days',  iconName: 'fastfood',         brandColor: '8E1F1F' },
+    { id: 'v3',  storeName: 'Pizza Al Reef',   description: '25% off your next pizza order',           coinCost: 40,  category: 'Food & Drinks',  discount: '25% OFF',    expiryNote: 'Valid for 21 days',  iconName: 'local_pizza',      brandColor: 'C62828' },
     { id: 'v4',  storeName: 'Amazon',           description: '$10 gift card for any purchase',           coinCost: 100, category: 'Shopping',       discount: '$10 Card',   expiryNote: 'No expiry',          iconName: 'shopping_bag',     brandColor: 'FF9900' },
     { id: 'v5',  storeName: 'Nike',             description: '15% off on footwear & apparel',           coinCost: 80,  category: 'Shopping',       discount: '15% OFF',    expiryNote: 'Valid for 60 days',  iconName: 'directions_run',   brandColor: '111111' },
     { id: 'v6',  storeName: 'IKEA',             description: '$5 off your next purchase over $25',       coinCost: 45,  category: 'Shopping',       discount: '$5 OFF',     expiryNote: 'Valid for 30 days',  iconName: 'chair',            brandColor: '0051BA' },
